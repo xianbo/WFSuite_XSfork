@@ -1,9 +1,9 @@
 # !/usr/bin/env python
 # -*- coding: utf-8 -*-
 # ----------------------------------------------------------------------- #
-# Copyright (c) 2024, UChicago Argonne, LLC. All rights reserved.         #
+# Copyright (c) 2024-2026, UChicago Argonne, LLC. All rights reserved.    #
 #                                                                         #
-# Copyright 2024. UChicago Argonne, LLC. This software was produced       #
+# Copyright 2024-2026. UChicago Argonne, LLC. This software was produced  #
 # under U.S. Government contract DE-AC02-06CH11357 for Argonne National   #
 # Laboratory (ANL), which is operated by UChicago Argonne, LLC for the    #
 # U.S. Department of Energy. The U.S. Government has rights to use,       #
