@@ -74,7 +74,7 @@ WAVELET_CUT        = ini_file.get_int_from_ini(    section="Common", key="Wavele
 PYRAMID_LEVEL      = ini_file.get_int_from_ini(    section="Common", key="Pyramid-Level",      default=1)
 N_ITERATIONS       = ini_file.get_int_from_ini(    section="Common", key="N-Iterations",       default=1)
 HALF_SEARCH_WINDOW = ini_file.get_int_from_ini(    section="Common", key="Half-Search-Window", default=20)
-CROP               = ini_file.get_list_from_ini(   section="Common", key="Crop",               default=[-1], type=int)
+CROP               = ini_file.get_list_from_ini(   section="Common", key="Crop",               default=[-1], _type=int)
 DOWN_SAMPLING      = ini_file.get_float_from_ini(  section="Common", key="Down-Sampling",      default=1.0)
 REBINNING          = ini_file.get_float_from_ini(  section="Common", key="Rebinning",          default=1.0)
 N_CORES            = ini_file.get_int_from_ini(    section="Common", key="N-Cores",            default=16)

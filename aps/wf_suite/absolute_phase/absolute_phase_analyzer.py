@@ -88,11 +88,11 @@ SOURCE_DISTANCE_H     = ini_file.get_float_from_ini(  section="Source", key="Sou
 
 D_SOURCE_RECAL        = ini_file.get_boolean_from_ini(section="Execution", key="Source-Distance-Recalculation", default=True)
 FIND_TRANSFER_MATRIX  = ini_file.get_boolean_from_ini(section="Execution", key="Find-Transfer-Matrix",          default=True)
-IMAGE_TRANSFER_MATRIX = ini_file.get_list_from_ini(   section="Execution", key="Image-Transfer-Matrix",         default=[0, 1, 0], type=int)
-CROP                  = ini_file.get_list_from_ini(   section="Execution", key="Crop",                          default=[-1], type=int)
+IMAGE_TRANSFER_MATRIX = ini_file.get_list_from_ini(   section="Execution", key="Image-Transfer-Matrix",         default=[0, 1, 0], _type=int)
+CROP                  = ini_file.get_list_from_ini(   section="Execution", key="Crop",                          default=[-1],      _type=int)
 ESTIMATION_METHOD     = ini_file.get_string_from_ini( section="Execution", key="Estimation-Method",             default='simple_speckle')
 PROPAGATOR            = ini_file.get_string_from_ini( section="Execution", key="Propagator",                    default='RS')
-IMAGE_OPS             = ini_file.get_dict_from_ini(   section="Execution", key="Image-Ops",                     default={"file" : [], "stream" :["T", "FH", "FV"]}, type=str)
+IMAGE_OPS             = ini_file.get_dict_from_ini(   section="Execution", key="Image-Ops",                     default={"file" : [], "stream" :["T", "FH", "FV"]})
 
 DARK                  = ini_file.get_string_from_ini( section="Reconstruction", key="Dark",  default=None)
 FLAT                  = ini_file.get_string_from_ini( section="Reconstruction", key="Flat",  default=None)
@@ -105,7 +105,7 @@ METHOD                = ini_file.get_string_from_ini( section="Reconstruction", 
 
 SPINNET_CONFIGURATION = ini_file.get_dict_from_ini(   section="Reconstruction", key="SPINNet-Configuration",
                                                       default={"SPINNet" :   {"type": "PO", "folder": "Result_pxShift_data_10k_T0p2_feature10_fp16_search3_longerTraining",       "model" : "training_model_002000.pt",          "setting" : "setting_002000.json"},
-                                                               "SPINNetSD" : {"type": "PO", "folder": "SpeckleDisplacementNet_05-01_12hr_mirror_10k_EdgePad_Beta_2-5_04_18_2025", "model" : "best_model_epoch_3268_Val_0.00448.pt", "setting" : "training_results.json"}}, type=str)
+                                                               "SPINNetSD" : {"type": "PO", "folder": "SpeckleDisplacementNet_05-01_12hr_mirror_10k_EdgePad_Beta_2-5_04_18_2025", "model" : "best_model_epoch_3268_Val_0.00448.pt", "setting" : "training_results.json"}})
 
 USE_GPU               = ini_file.get_boolean_from_ini(section="Reconstruction", key="Use-Gpu",           default=False)
 USE_WAVELET           = ini_file.get_boolean_from_ini(section="Reconstruction", key="Use-Wavelet",       default=False)
@@ -135,8 +135,8 @@ DISTANCE_V              = ini_file.get_float_from_ini(  section="Back-Propagatio
 DISTANCE_H              = ini_file.get_float_from_ini(  section="Back-Propagation", key="1D, Propagation-Distance-H",  default=1.0)
 DELTA_F_V               = ini_file.get_dict_from_ini(   section="Back-Propagation", key="Delta-F-V",                   default={"WXST" : 0.0, "SPINNet" : 0.0})
 DELTA_F_H               = ini_file.get_dict_from_ini(   section="Back-Propagation", key="Delta-F-H",                   default={"WXST" : 0.0, "SPINNet" : 0.0})
-RMS_RANGE_V             = ini_file.get_list_from_ini(   section="Back-Propagation", key="RMS-Range-V",                 default=[-2e-6, 2e-6], type=float)
-RMS_RANGE_H             = ini_file.get_list_from_ini(   section="Back-Propagation", key="RMS-Range-H",                 default=[-2e-6, 2e-6], type=float)
+RMS_RANGE_V             = ini_file.get_list_from_ini(   section="Back-Propagation", key="RMS-Range-V",                 default=[-2e-6, 2e-6], _type=float)
+RMS_RANGE_H             = ini_file.get_list_from_ini(   section="Back-Propagation", key="RMS-Range-H",                 default=[-2e-6, 2e-6], _type=float)
 ENGINE                  = ini_file.get_string_from_ini( section="Back-Propagation", key="Engine",                      default="WOFRY")
 
 # WOFRY
@@ -158,9 +158,9 @@ VERTICAL_RESOLUTION_MODIFICATION_FACTOR_AT_RESIZING    = ini_file.get_float_from
 SCAN_BEST_FOCUS         = ini_file.get_boolean_from_ini(section="Back-Propagation", key="Scan-Best-Focus",             default=False)
 USE_FIT                 = ini_file.get_boolean_from_ini(section="Back-Propagation", key="USe-Fit",                     default=True)
 BEST_FOCUS_FROM         = ini_file.get_string_from_ini( section="Back-Propagation", key="Best-Focus-From",             default="rms")
-BEST_FOCUS_SCAN_RANGE   = ini_file.get_list_from_ini(   section="Back-Propagation", key="2D, Best-Focus-Scan-Range",   default=[-0.001, 0.001, 0.0001], type=float)
-BEST_FOCUS_SCAN_RANGE_V = ini_file.get_list_from_ini(   section="Back-Propagation", key="1D, Best-Focus-Scan-Range-V", default=[-0.001, 0.001, 0.0001], type=float)
-BEST_FOCUS_SCAN_RANGE_H = ini_file.get_list_from_ini(   section="Back-Propagation", key="1D, Best-Focus-Scan-Range-H", default=[-0.001, 0.001, 0.0001], type=float)
+BEST_FOCUS_SCAN_RANGE   = ini_file.get_list_from_ini(   section="Back-Propagation", key="2D, Best-Focus-Scan-Range",   default=[-0.001, 0.001, 0.0001], _type=float)
+BEST_FOCUS_SCAN_RANGE_V = ini_file.get_list_from_ini(   section="Back-Propagation", key="1D, Best-Focus-Scan-Range-V", default=[-0.001, 0.001, 0.0001], _type=float)
+BEST_FOCUS_SCAN_RANGE_H = ini_file.get_list_from_ini(   section="Back-Propagation", key="1D, Best-Focus-Scan-Range-H", default=[-0.001, 0.001, 0.0001], _type=float)
 
 SHOW_ALIGN_FIGURE     = ini_file.get_boolean_from_ini(section="Output", key="Show-Align-Figure",     default=False)
 CORRECT_SCALE         = ini_file.get_boolean_from_ini(section="Output", key="Correct-Scale",         default=False)
