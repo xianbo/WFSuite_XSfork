@@ -52,7 +52,7 @@ except AttributeError:
 
 NAME = 'wf-suite'
 
-VERSION = '1.0.5'
+VERSION = '1.0.6'
 ISRELEASED = True
 
 DESCRIPTION = 'APS Wavefront Analysis Tools'
@@ -83,14 +83,14 @@ CLASSIFIERS = [
 ]
 
 INSTALL_REQUIRES = (
-    'aps-common-libraries>=1.0.39',
+    'aps-common-libraries>=1.0.49',
     'PyQt6',
     'PyWavelets',
     'wofryImpl',
     'wofrysrw',
     'srwpy',
     'cmasher',
-    'torch==2.7.0',
+    'torch==2.12.1',
 )
 
 PACKAGES = find_packages(exclude=('*.tests', '*.tests.*', 'tests.*', 'tests' ))
