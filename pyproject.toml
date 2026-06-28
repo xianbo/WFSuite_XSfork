@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=77.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wf-suite"
+version = "1.0.8"
+description = "APS Wavefront Analysis Tools"
+readme = "README.md"
+license = "BSD-3-Clause"
+authors = [
+    { name = "Luca Rebuffi", email = "lrebuffi@anl.gov" },
+    { name = "Xianbo Shi", email = "xshi@anl.gov" },
+]
+maintainers = [
+    { name = "XSD-OPT Group @ APS-ANL", email = "lrebuffi@anl.gov" },
+]
+keywords = [
+    "dictionary",
+    "glossary",
+    "synchrotron",
+    "simulation",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Natural Language :: English",
+    "Environment :: Console",
+    "Environment :: Plugins",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Visualization",
+    "Intended Audience :: Science/Research",
+]
+dependencies = [
+    "aps-common-libraries>=1.0.49",
+    "PyQt6",
+    "PyWavelets",
+    "wofryImpl",
+    "wofrysrw",
+    "srwpy",
+    "cmasher",
+    "torch>=2.7.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/APS-XSD-OPT-Group/WFSuite"
+Download = "https://github.com/APS-XSD-OPT-Group/WFSuite"
+
+[tool.setuptools]
+include-package-data = true
+zip-safe = false
+
+[tool.setuptools.packages.find]
+exclude = ["*.tests", "*.tests.*", "tests.*", "tests"]
+
+[tool.setuptools.package-data]
+"aps.wf_suite.driver.gui" = ["icons/*"]
