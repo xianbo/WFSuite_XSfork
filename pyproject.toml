@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wf-suite"
-version = "1.0.8"
+version = "1.0.9"
 description = "APS Wavefront Analysis Tools"
 readme = "README.md"
 license = "BSD-3-Clause"

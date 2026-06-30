@@ -374,19 +374,23 @@ class AbsolutePhaseWidget(GenericWidget):
         gui.checkBox(wa_box_5, self, "find_transfer_matrix",  "Find Transfer Matrix")
         self._le_itm = gui.lineEdit(wa_box_5, self, "image_transfer_matrix", "Image Transfer Matrix", labelWidth=labels_width_1, orientation='horizontal', valueType=str)
 
-        if sys.platform == 'darwin' : wa_box_6 = gui.widgetBox(wa_tab_2, "Reconstruction", width=self._wa_box.width()-25, height=510)
-        else:                         wa_box_6 = gui.widgetBox(wa_tab_2, "Reconstruction", width=self._wa_box.width()-25, height=560)
+        if sys.platform == 'darwin' : wa_box_6 = gui.widgetBox(wa_tab_2, "Reconstruction", width=self._wa_box.width()-25, height=450)
+        else:                         wa_box_6 = gui.widgetBox(wa_tab_2, "Reconstruction", width=self._wa_box.width()-25, height=500)
 
-        gui.checkBox(wa_box_6, self, "use_flat", "Use Flat Image", callback=self._set_use_flat)
+        flat_box = gui.widgetBox(wa_box_6, "", width=self._wa_box.width() - 45, orientation="horizontal")
 
-        self._flat_file_box = gui.widgetBox(wa_box_6, "", width=wa_box_6.width() - 20, height=30, orientation='horizontal', addSpace=False)
-        self._le_flat_file = gui.lineEdit(self._flat_file_box, self, "flat_file", "Flat Image", orientation='horizontal', valueType=str)
+        gui.checkBox(flat_box, self, "use_flat", "Use Flat Image", callback=self._set_use_flat)
+
+        self._flat_file_box = gui.widgetBox(flat_box, "", width=flat_box.width() - 120, height=25, orientation='horizontal', addSpace=False)
+        self._le_flat_file = gui.lineEdit(self._flat_file_box, self, "flat_file", "", orientation='horizontal', valueType=str)
         gui.button(self._flat_file_box, self, "...", width=30, callback=self._set_flat_file)
 
-        gui.checkBox(wa_box_6, self, "use_dark", "Use Dark Image", callback=self._set_use_dark)
+        dark_box = gui.widgetBox(wa_box_6, "", width=self._wa_box.width() - 45, orientation="horizontal")
 
-        self._dark_file_box = gui.widgetBox(wa_box_6, "", width=wa_box_6.width() - 20, height=30, orientation='horizontal', addSpace=False)
-        self._le_dark_file = gui.lineEdit(self._dark_file_box, self, "dark_file", "Dark Image", orientation='horizontal', valueType=str)
+        gui.checkBox(dark_box, self, "use_dark", "Use Dark Image", callback=self._set_use_dark)
+
+        self._dark_file_box = gui.widgetBox(dark_box, "", width=dark_box.width() - 130, height=25, orientation='horizontal', addSpace=False)
+        self._le_dark_file = gui.lineEdit(self._dark_file_box, self, "dark_file", "", orientation='horizontal', valueType=str)
         gui.button(self._dark_file_box, self, "...", width=30, callback=self._set_dark_file)
 
         self._crop_box = gui.widgetBox(wa_box_6, "", width=wa_box_6.width() - 20, height=30, orientation='horizontal', addSpace=False)
