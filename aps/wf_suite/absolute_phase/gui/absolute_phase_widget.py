@@ -172,6 +172,8 @@ class AbsolutePhaseWidget(GenericWidget):
         self.image_transfer_matrix = list_to_string(data_analysis_configuration["image_transfer_matrix"])
         self.show_align_figure = data_analysis_configuration["show_align_figure"]
         self.correct_scale = data_analysis_configuration["correct_scale"]
+        self.flat_file = data_analysis_configuration.get("flat", None) or ""
+        self.dark_file = data_analysis_configuration.get("dark", None) or ""
 
         self._delta_f_v = back_propagation_configuration["delta_f_v"]
         self._delta_f_h = back_propagation_configuration["delta_f_h"]
@@ -372,11 +374,20 @@ class AbsolutePhaseWidget(GenericWidget):
         gui.checkBox(wa_box_5, self, "find_transfer_matrix",  "Find Transfer Matrix")
         self._le_itm = gui.lineEdit(wa_box_5, self, "image_transfer_matrix", "Image Transfer Matrix", labelWidth=labels_width_1, orientation='horizontal', valueType=str)
 
-        if sys.platform == 'darwin' : wa_box_6 = gui.widgetBox(wa_tab_2, "Reconstruction", width=self._wa_box.width()-25, height=450)
-        else:                         wa_box_6 = gui.widgetBox(wa_tab_2, "Reconstruction", width=self._wa_box.width()-25, height=500)
+        if sys.platform == 'darwin' : wa_box_6 = gui.widgetBox(wa_tab_2, "Reconstruction", width=self._wa_box.width()-25, height=510)
+        else:                         wa_box_6 = gui.widgetBox(wa_tab_2, "Reconstruction", width=self._wa_box.width()-25, height=560)
 
-        gui.checkBox(wa_box_6, self, "use_flat", "Use Flat Image")
-        gui.checkBox(wa_box_6, self, "use_dark", "Use Dark Image")
+        gui.checkBox(wa_box_6, self, "use_flat", "Use Flat Image", callback=self._set_use_flat)
+
+        self._flat_file_box = gui.widgetBox(wa_box_6, "", width=wa_box_6.width() - 20, height=30, orientation='horizontal', addSpace=False)
+        self._le_flat_file = gui.lineEdit(self._flat_file_box, self, "flat_file", "Flat Image", orientation='horizontal', valueType=str)
+        gui.button(self._flat_file_box, self, "...", width=30, callback=self._set_flat_file)
+
+        gui.checkBox(wa_box_6, self, "use_dark", "Use Dark Image", callback=self._set_use_dark)
+
+        self._dark_file_box = gui.widgetBox(wa_box_6, "", width=wa_box_6.width() - 20, height=30, orientation='horizontal', addSpace=False)
+        self._le_dark_file = gui.lineEdit(self._dark_file_box, self, "dark_file", "Dark Image", orientation='horizontal', valueType=str)
+        gui.button(self._dark_file_box, self, "...", width=30, callback=self._set_dark_file)
 
         self._crop_box = gui.widgetBox(wa_box_6, "", width=wa_box_6.width() - 20, height=30, orientation='horizontal', addSpace=False)
 
@@ -500,6 +511,8 @@ class AbsolutePhaseWidget(GenericWidget):
         self._set_file_name_type()
         self._set_method()
         self._set_d_source_recal()
+        self._set_use_flat()
+        self._set_use_dark()
         self._set_kind()
         self._set_engine()
         self._set_scan_best_focus()
@@ -792,6 +805,26 @@ class AbsolutePhaseWidget(GenericWidget):
                                           previous_directory_path=self.simulated_mask_directory,
                                           start_directory=self.image_directory))
 
+    def _set_use_flat(self):
+        self._flat_file_box.setVisible(bool(self.use_flat))
+
+    def _set_flat_file(self):
+        self._le_flat_file.setText(
+            gui.selectFileFromDialog(self,
+                                     previous_file_path=self.flat_file,
+                                     start_directory=self.image_directory,
+                                     file_extension_filter="Data Files (*.tif *.hdf5)"))
+
+    def _set_use_dark(self):
+        self._dark_file_box.setVisible(bool(self.use_dark))
+
+    def _set_dark_file(self):
+        self._le_dark_file.setText(
+            gui.selectFileFromDialog(self,
+                                     previous_file_path=self.dark_file,
+                                     start_directory=self.image_directory,
+                                     file_extension_filter="Data Files (*.tif *.hdf5)"))
+
     def _set_d_source_recal(self):
         self.le_estimation_method.setEnabled(bool(self.d_source_recal))
 
@@ -877,6 +910,8 @@ class AbsolutePhaseWidget(GenericWidget):
         data_analysis_configuration["image_transfer_matrix"] = string_to_list(self.image_transfer_matrix, int)
         data_analysis_configuration["show_align_figure"] = self.show_align_figure
         data_analysis_configuration["correct_scale"] = self.correct_scale
+        data_analysis_configuration["flat"] = self.flat_file if self.flat_file else None
+        data_analysis_configuration["dark"] = self.dark_file if self.dark_file else None
 
         back_propagation_configuration["kind"]         = self.kind
         back_propagation_configuration["rebinning_bp"] = self.rebinning_bp
