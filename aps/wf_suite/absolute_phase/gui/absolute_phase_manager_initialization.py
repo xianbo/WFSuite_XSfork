@@ -94,6 +94,8 @@ def generate_initialization_parameters_from_ini(ini: IniFacade):
             "image_transfer_matrix" : wa.IMAGE_TRANSFER_MATRIX,
             "show_align_figure" : wa.SHOW_ALIGN_FIGURE,
             "correct_scale" : wa.CORRECT_SCALE,
+            "flat" : wa.FLAT,
+            "dark" : wa.DARK,
         },
         "back_propagation" :{
             "kind" : wa.KIND,
@@ -221,6 +223,8 @@ def set_ini_from_initialization_parameters(initialization_parameters: ScriptData
     wa.IMAGE_TRANSFER_MATRIX = data_analysis_configuration["image_transfer_matrix"]
     wa.SHOW_ALIGN_FIGURE = data_analysis_configuration["show_align_figure"]
     wa.CORRECT_SCALE = data_analysis_configuration["correct_scale"]
+    wa.FLAT = data_analysis_configuration["flat"]
+    wa.DARK = data_analysis_configuration["dark"]
     
     wa.KIND = back_propagation_configuration["kind"]
     wa.REBINNING_BP = back_propagation_configuration["rebinning_bp"]
