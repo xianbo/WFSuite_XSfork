@@ -96,6 +96,12 @@ def generate_initialization_parameters_from_ini(ini: IniFacade):
             "correct_scale" : wa.CORRECT_SCALE,
             "flat" : wa.FLAT,
             "dark" : wa.DARK,
+            "wsvt_scan_positions_file" : wa.WSVT_SCAN_POSITIONS_FILE,
+            "wsvt_n_scan" : wa.WSVT_N_SCAN,
+            "wsvt_auto_sign" : wa.WSVT_AUTO_SIGN,
+            "wsvt_sign_x" : wa.WSVT_SIGN_X,
+            "wsvt_sign_y" : wa.WSVT_SIGN_Y,
+            "wsvt_position_units" : wa.WSVT_POSITION_UNITS,
         },
         "back_propagation" :{
             "kind" : wa.KIND,
@@ -225,6 +231,12 @@ def set_ini_from_initialization_parameters(initialization_parameters: ScriptData
     wa.CORRECT_SCALE = data_analysis_configuration["correct_scale"]
     wa.FLAT = data_analysis_configuration["flat"]
     wa.DARK = data_analysis_configuration["dark"]
+    wa.WSVT_SCAN_POSITIONS_FILE = data_analysis_configuration["wsvt_scan_positions_file"]
+    wa.WSVT_N_SCAN = data_analysis_configuration["wsvt_n_scan"]
+    wa.WSVT_AUTO_SIGN = data_analysis_configuration["wsvt_auto_sign"]
+    wa.WSVT_SIGN_X = data_analysis_configuration["wsvt_sign_x"]
+    wa.WSVT_SIGN_Y = data_analysis_configuration["wsvt_sign_y"]
+    wa.WSVT_POSITION_UNITS = data_analysis_configuration["wsvt_position_units"]
     
     wa.KIND = back_propagation_configuration["kind"]
     wa.REBINNING_BP = back_propagation_configuration["rebinning_bp"]

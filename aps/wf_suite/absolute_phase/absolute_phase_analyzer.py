@@ -55,6 +55,7 @@ import numpy as np
 import json
 
 from aps.wf_suite.absolute_phase.legacy.process_images_executor import execute_process_image
+from aps.wf_suite.absolute_phase.legacy.process_images_WSVT_executor import execute_process_images_WSVT
 from aps.wf_suite.absolute_phase.legacy.back_propagation_executor import execute_back_propagation
 
 from aps.wf_suite.absolute_phase.facade import IAbsolutePhaseAnalyzer, ProcessingMode, MAX_THREADS
@@ -165,6 +166,14 @@ BEST_FOCUS_SCAN_RANGE_H = ini_file.get_list_from_ini(   section="Back-Propagatio
 SHOW_ALIGN_FIGURE     = ini_file.get_boolean_from_ini(section="Output", key="Show-Align-Figure",     default=False)
 CORRECT_SCALE         = ini_file.get_boolean_from_ini(section="Output", key="Correct-Scale",         default=False)
 
+# WSVT
+WSVT_SCAN_POSITIONS_FILE = ini_file.get_string_from_ini( section="WSVT", key="Scan-Positions-File", default=None)
+WSVT_N_SCAN              = ini_file.get_int_from_ini(    section="WSVT", key="N-Scan",              default=51)
+WSVT_AUTO_SIGN           = ini_file.get_boolean_from_ini(section="WSVT", key="Auto-Sign",           default=True)
+WSVT_SIGN_X              = ini_file.get_int_from_ini(    section="WSVT", key="Sign-X",              default=1)
+WSVT_SIGN_Y              = ini_file.get_int_from_ini(    section="WSVT", key="Sign-Y",              default=1)
+WSVT_POSITION_UNITS      = ini_file.get_string_from_ini( section="WSVT", key="Position-Units",      default="mm")
+
 def store():
     ini_file.set_value_at_ini(section="General", key="Data-Directory", value=DATA_DIRECTORY)
 
@@ -254,6 +263,14 @@ def store():
     ini_file.set_value_at_ini(section="Output", key="Show-Align-Figure",     value=SHOW_ALIGN_FIGURE)
     ini_file.set_value_at_ini(section="Output", key="Correct-Scale",         value=CORRECT_SCALE)
 
+    # WSVT
+    ini_file.set_value_at_ini(section="WSVT", key="Scan-Positions-File", value=WSVT_SCAN_POSITIONS_FILE)
+    ini_file.set_value_at_ini(section="WSVT", key="N-Scan",              value=WSVT_N_SCAN)
+    ini_file.set_value_at_ini(section="WSVT", key="Auto-Sign",           value=WSVT_AUTO_SIGN)
+    ini_file.set_value_at_ini(section="WSVT", key="Sign-X",              value=WSVT_SIGN_X)
+    ini_file.set_value_at_ini(section="WSVT", key="Sign-Y",              value=WSVT_SIGN_Y)
+    ini_file.set_value_at_ini(section="WSVT", key="Position-Units",      value=WSVT_POSITION_UNITS)
+
     ini_file.push()
 
 store()
@@ -300,6 +317,13 @@ class AbsolutePhaseAnalyzer(IAbsolutePhaseAnalyzer):
                               energy=self.__energy,
                               image_index=image_index,
                               **kwargs)
+
+    def process_images_WSVT(self, data_collection_directory: str = None, **kwargs):
+        return _process_images_WSVT(data_collection_directory=self.__data_collection_directory if data_collection_directory is None else data_collection_directory,
+                                    file_name_prefix=self.__file_name_prefix,
+                                    mask_directory=self.__simulated_mask_directory,
+                                    energy=self.__energy,
+                                    **kwargs)
 
     def process_images(self, data_collection_directory: str = None, mode=ProcessingMode.LIVE, n_threads=MAX_THREADS, **kwargs):
         data_collection_directory = self.__data_collection_directory if data_collection_directory is None else data_collection_directory
@@ -498,8 +522,88 @@ def _process_image(data_collection_directory, file_name_prefix, mask_directory, 
                                  template_size=kwargs.get("template_size", TEMPLATE_SIZE),
                                  window_searching=kwargs.get("window_search", WINDOW_SEARCH),
                                  nCores=kwargs.get("n_cores", N_CORES),
-                                 nGroup=kwargs.get("n_group", N_GROUP),
-                                 verbose=verbose)
+                                  nGroup=kwargs.get("n_group", N_GROUP),
+                                  verbose=verbose)
+
+def _process_images_WSVT(data_collection_directory, file_name_prefix, mask_directory, energy, **kwargs):
+    data_directory = DATA_DIRECTORY
+
+    index_digits = kwargs.get("index_digits", None)
+
+    use_flat = kwargs.get("use_flat")
+    use_dark = kwargs.get("use_dark")
+
+    dark           = None if (DARK is None or not use_dark) else os.path.join(data_collection_directory, DARK)
+    flat           = None if (FLAT is None or not use_flat) else os.path.join(data_collection_directory, FLAT)
+    mask_directory = os.path.join(data_collection_directory, "simulated_mask") if mask_directory is None else mask_directory
+
+    # Use the first image's name as the result folder (same convention as WXST)
+    # so that the GUI and back-propagation can find the results
+    image_file_name = get_image_file_path(measurement_directory=data_collection_directory,
+                                          file_name_prefix=file_name_prefix,
+                                          image_index=1,
+                                          index_digits=index_digits)
+    result_folder  = os.path.join(os.path.dirname(image_file_name),
+                                  os.path.basename(image_file_name).split(pathlib.Path(image_file_name).suffix)[0])
+
+    # pattern simulation parameters
+    pattern_path          = os.path.join(data_directory, 'absolute_phase', 'mask', RAN_MASK)
+    propagated_pattern    = os.path.join(mask_directory, 'propagated_pattern.npz')
+    propagated_patternDet = os.path.join(mask_directory, 'propagated_patternDet.npz')
+    simulated_ref_stack   = os.path.join(mask_directory, 'simulated_ref_stack.npz')
+    saving_path           = mask_directory
+
+    return execute_process_images_WSVT(
+        image_directory=data_collection_directory,
+        scan_positions_file=kwargs.get("scan_positions_file", WSVT_SCAN_POSITIONS_FILE),
+        data_directory=data_directory,
+        result_folder=result_folder,
+        pattern_path=pattern_path,
+        propagated_pattern=propagated_pattern,
+        propagated_patternDet=propagated_patternDet,
+        simulated_ref_stack=simulated_ref_stack,
+        process_after_mask=True,
+        saving_path=saving_path,
+        n_scan=kwargs.get("n_scan", WSVT_N_SCAN),
+        sign_x=kwargs.get("sign_x", WSVT_SIGN_X),
+        sign_y=kwargs.get("sign_y", WSVT_SIGN_Y),
+        auto_sign=kwargs.get("auto_sign", WSVT_AUTO_SIGN),
+        position_units=kwargs.get("position_units", WSVT_POSITION_UNITS),
+        p_x=kwargs.get("pixel_size", ws.PIXEL_SIZE),
+        det_res=kwargs.get("detector_resolution", ws.DETECTOR_RESOLUTION),
+        energy=energy,
+        pattern_size=kwargs.get("pattern_size", PATTERN_SIZE),
+        pattern_thickness=kwargs.get("pattern_thickness", PATTERN_THICKNESS),
+        pattern_T=kwargs.get("pattern_transmission", PATTERN_TRANSMISSION),
+        d_prop=kwargs.get("propagation_distance", PROPAGATION_DISTANCE),
+        d_source_v=kwargs.get("source_distance_v", SOURCE_DISTANCE_V),
+        d_source_h=kwargs.get("source_distance_h", SOURCE_DISTANCE_H),
+        source_v=kwargs.get("source_size_v", SOURCE_V),
+        source_h=kwargs.get("source_size_h", SOURCE_H),
+        correct_scale=kwargs.get("correct_scale", CORRECT_SCALE),
+        show_alignFigure=kwargs.get("show_align_figure", SHOW_ALIGN_FIGURE),
+        d_source_recal=kwargs.get("source_distance_recalculation", D_SOURCE_RECAL),
+        estimation_method=kwargs.get("estimation_method", ESTIMATION_METHOD),
+        propagator=kwargs.get("propagator", PROPAGATOR),
+        img_transfer_matrix=kwargs.get("image_transfer_matrix", IMAGE_TRANSFER_MATRIX),
+        find_transferMatrix=False,
+        crop=kwargs.get("crop", CROP),
+        dark=dark,
+        flat=flat,
+        rebinning=kwargs.get("rebinning", REBINNING),
+        lineWidth=kwargs.get("line_width", LINE_WIDTH),
+        cal_half_window=kwargs.get("window_search", WINDOW_SEARCH),
+        n_cores=kwargs.get("n_cores", N_CORES),
+        n_group=kwargs.get("n_group", N_GROUP),
+        use_wavelet=kwargs.get("use_wavelet", USE_WAVELET),
+        wavelet_lv_cut=kwargs.get("wavelet_lv_cut", WAVELET_CUT),
+        pyramid_level=kwargs.get("pyramid_level", PYRAMID_LEVEL),
+        n_iter=kwargs.get("n_iterations", N_ITERATIONS),
+        use_GPU=kwargs.get("use_gpu", USE_GPU),
+        scaling_x=kwargs.get("scaling_x", 1.0),
+        scaling_y=kwargs.get("scaling_y", 1.0),
+        verbose=kwargs.get("verbose", False),
+        save_images=kwargs.get("save_images", True))
 
 def _generate_simulated_mask(data_collection_directory, file_name_prefix, mask_directory, energy, image_index=1, **kwargs) -> [list, bool]:
     index_digits = kwargs.get("index_digits", ws.INDEX_DIGITS)
@@ -520,8 +624,15 @@ def _generate_simulated_mask(data_collection_directory, file_name_prefix, mask_d
     result_folder  = os.path.join(os.path.dirname(image_file_name),
                                   os.path.basename(image_file_name).split(pathlib.Path(image_file_name).suffix)[0])
 
-    pattern_path    = os.path.join(os.path.dirname(__import__("aps.wf_suite.absolute_phase.legacy", fromlist=[""]).__file__), 'mask', RAN_MASK)
+    pattern_path    = os.path.join(DATA_DIRECTORY, 'absolute_phase', 'mask', RAN_MASK)
     saving_path     = mask_directory
+
+    # For mask generation, use "simple" method if WSVT is selected since the
+    # single-shot executor doesn't support WSVT as a tracking method.
+    # The mask generation only needs pattern simulation, not speckle tracking.
+    mask_gen_method = kwargs.get("method", METHOD)
+    if mask_gen_method == "WSVT":
+        mask_gen_method = "simple"
 
     if not os.path.exists(mask_directory): os.mkdir(mask_directory)
 
@@ -533,12 +644,13 @@ def _generate_simulated_mask(data_collection_directory, file_name_prefix, mask_d
                               dark=dark,
                               flat=flat,
                               result_folder=result_folder,
+                              data_directory=DATA_DIRECTORY,
                               pattern_path=pattern_path,
                               propagated_pattern=None,
                               propagated_patternDet=None,
                               saving_path=saving_path,
                               crop=kwargs.get("crop", CROP),
-                              img_transfer_matrix=None,
+                              img_transfer_matrix=None if FIND_TRANSFER_MATRIX else IMAGE_TRANSFER_MATRIX,
                               find_transferMatrix=FIND_TRANSFER_MATRIX,
                               p_x=kwargs.get("pixel_size", ws.PIXEL_SIZE),
                               det_res=kwargs.get("detector_resolution", ws.DETECTOR_RESOLUTION),
@@ -561,7 +673,7 @@ def _generate_simulated_mask(data_collection_directory, file_name_prefix, mask_d
                               rebinning=kwargs.get("rebinning", REBINNING),
                               down_sampling=kwargs.get("down_sampling", DOWN_SAMPLING),
                               crop_boundary=kwargs.get("crop_boundary", CROP_BOUNDARY),
-                              method=kwargs.get("method", METHOD),
+                              method=mask_gen_method,
                               GPU=kwargs.get("use_gpu", USE_GPU),
                               use_wavelet=kwargs.get("use_wavelet", USE_WAVELET),
                               wavelet_lv_cut=kwargs.get("wavelet_lv_cut", WAVELET_CUT),

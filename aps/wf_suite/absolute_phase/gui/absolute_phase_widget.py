@@ -45,6 +45,7 @@
 # POSSIBILITY OF SUCH DAMAGE.                                             #
 # ----------------------------------------------------------------------- #
 import sys
+import traceback
 
 import numpy as np
 
@@ -174,6 +175,14 @@ class AbsolutePhaseWidget(GenericWidget):
         self.correct_scale = data_analysis_configuration["correct_scale"]
         self.flat_file = data_analysis_configuration.get("flat", None) or ""
         self.dark_file = data_analysis_configuration.get("dark", None) or ""
+
+        # WSVT
+        self.wsvt_scan_positions_file = data_analysis_configuration.get("wsvt_scan_positions_file", None) or ""
+        self.wsvt_n_scan = data_analysis_configuration.get("wsvt_n_scan", 51)
+        self.wsvt_auto_sign = data_analysis_configuration.get("wsvt_auto_sign", True)
+        self.wsvt_sign_x = data_analysis_configuration.get("wsvt_sign_x", 1)
+        self.wsvt_sign_y = data_analysis_configuration.get("wsvt_sign_y", 1)
+        self.wsvt_position_units = data_analysis_configuration.get("wsvt_position_units", "mm")
 
         self._delta_f_v = back_propagation_configuration["delta_f_v"]
         self._delta_f_h = back_propagation_configuration["delta_f_h"]
@@ -366,16 +375,16 @@ class AbsolutePhaseWidget(GenericWidget):
         gui.checkBox(wa_box_4, self, "show_align_figure",  "Show Align Figure")
         gui.checkBox(wa_box_4, self, "correct_scale",      "Correct Scale")
 
-        if sys.platform == 'darwin' : wa_box_5 = gui.widgetBox(wa_tab_2, "Simulated Mask", width=self._wa_box.width()-25, height=140)
-        else:                         wa_box_5 = gui.widgetBox(wa_tab_2, "Simulated Mask", width=self._wa_box.width()-25, height=170)
+        if sys.platform == 'darwin' : wa_box_5 = gui.widgetBox(wa_tab_2, "Simulated Mask", width=self._wa_box.width()-25, height=120)
+        else:                         wa_box_5 = gui.widgetBox(wa_tab_2, "Simulated Mask", width=self._wa_box.width()-25, height=140)
 
         gui.checkBox(wa_box_5, self, "d_source_recal",  "Source Distance Recalculation", callback=self._set_d_source_recal)
         self.le_estimation_method = gui.lineEdit(wa_box_5, self, "estimation_method", "Method", labelWidth=labels_width_1, orientation='horizontal', valueType=str)
         gui.checkBox(wa_box_5, self, "find_transfer_matrix",  "Find Transfer Matrix")
         self._le_itm = gui.lineEdit(wa_box_5, self, "image_transfer_matrix", "Image Transfer Matrix", labelWidth=labels_width_1, orientation='horizontal', valueType=str)
 
-        if sys.platform == 'darwin' : wa_box_6 = gui.widgetBox(wa_tab_2, "Reconstruction", width=self._wa_box.width()-25, height=450)
-        else:                         wa_box_6 = gui.widgetBox(wa_tab_2, "Reconstruction", width=self._wa_box.width()-25, height=500)
+        if sys.platform == 'darwin' : wa_box_6 = gui.widgetBox(wa_tab_2, "Reconstruction", width=self._wa_box.width()-25, height=510)
+        else:                         wa_box_6 = gui.widgetBox(wa_tab_2, "Reconstruction", width=self._wa_box.width()-25, height=560)
 
         flat_box = gui.widgetBox(wa_box_6, "", width=self._wa_box.width() - 45, orientation="horizontal")
 
@@ -402,7 +411,7 @@ class AbsolutePhaseWidget(GenericWidget):
         gui.lineEdit(wa_box_6, self, "line_width", label="Line Width", labelWidth=labels_width_1, orientation='horizontal', valueType=int)
         gui.lineEdit(wa_box_6, self, "rebinning", label="Image Rebinning Factor", labelWidth=labels_width_1, orientation='horizontal', valueType=float)
         gui.lineEdit(wa_box_6, self, "down_sampling", label="Down Sampling", labelWidth=labels_width_1, orientation='horizontal', valueType=float)
-        gui.lineEdit(wa_box_6, self, "method", label="Method (WXST, SPINNet(SD), simple)", labelWidth=labels_width_1, orientation='horizontal', valueType=str, callback=self._set_method)
+        gui.lineEdit(wa_box_6, self, "method", label="Method (WXST, SPINNet(SD), simple, WSVT)", labelWidth=labels_width_1, orientation='horizontal', valueType=str, callback=self._set_method)
         gui.checkBox(wa_box_6, self, "use_wavelet",  "Use Wavelets")
 
         gui.lineEdit(wa_box_6, self, "wavelet_cut", label="Wavelet Cut", labelWidth=labels_width_1, orientation='horizontal', valueType=int)
@@ -411,6 +420,27 @@ class AbsolutePhaseWidget(GenericWidget):
         gui.lineEdit(wa_box_6, self, "template_size", label="Template Size", labelWidth=labels_width_1, orientation='horizontal', valueType=int)
         gui.lineEdit(wa_box_6, self, "window_search", label="Window Search", labelWidth=labels_width_1, orientation='horizontal', valueType=int)
         gui.lineEdit(wa_box_6, self, "crop_boundary", "Boundary Crop (-1: auto, 0: no, n: nr pixels)", labelWidth=labels_width_1, orientation='horizontal', valueType=int)
+
+        # --- WSVT-specific inputs (visible only when method == "WSVT") ---
+        self._wsvt_box = gui.widgetBox(wa_box_6, "", width=wa_box_6.width() - 20, height=110, orientation="vertical")
+
+        wsvt_file_box = gui.widgetBox(self._wsvt_box, "", width=self._wsvt_box.width() - 10, height=30, orientation='horizontal', addSpace=False)
+        self._le_wsvt_scan_positions_file = gui.lineEdit(wsvt_file_box, self, "wsvt_scan_positions_file", "Scan Positions (.json)", labelWidth=labels_width_1, orientation='horizontal', valueType=str)
+        gui.button(wsvt_file_box, self, "...", width=30, callback=self._set_wsvt_scan_positions_file)
+
+        wsvt_row_1 = gui.widgetBox(self._wsvt_box, "", width=self._wsvt_box.width() - 10, height=30, orientation='horizontal')
+        gui.lineEdit(wsvt_row_1, self, "wsvt_n_scan", label="N Scan", labelWidth=labels_width_2, orientation='horizontal', valueType=int)
+        gui.lineEdit(wsvt_row_1, self, "wsvt_position_units", label="Units (mm, um)", labelWidth=labels_width_3, orientation='horizontal', valueType=str)
+
+        wsvt_row_2 = gui.widgetBox(self._wsvt_box, "", width=self._wsvt_box.width() - 10, height=30, orientation='horizontal')
+        gui.checkBox(wsvt_row_2, self, "wsvt_auto_sign", "Auto Sign", callback=self._set_wsvt_auto_sign)
+        self._wsvt_sign_box = gui.widgetBox(wsvt_row_2, "", orientation='horizontal')
+        gui.lineEdit(self._wsvt_sign_box, self, "wsvt_sign_x", label="Sign X", labelWidth=40, orientation='horizontal', valueType=int)
+        gui.lineEdit(self._wsvt_sign_box, self, "wsvt_sign_y", label="Y", labelWidth=15, orientation='horizontal', valueType=int)
+
+        self._wsvt_box.setVisible(self.method == "WSVT")
+        self._wsvt_sign_box.setVisible(not self.wsvt_auto_sign)
+        # --- end WSVT ---
 
         #########################################################################################
         # Back-Propagation
@@ -829,6 +859,13 @@ class AbsolutePhaseWidget(GenericWidget):
                                      start_directory=self.image_directory,
                                      file_extension_filter="Data Files (*.tif *.hdf5)"))
 
+    def _set_wsvt_scan_positions_file(self):
+        self._le_wsvt_scan_positions_file.setText(
+            gui.selectFileFromDialog(self,
+                                     previous_file_path=self.wsvt_scan_positions_file,
+                                     start_directory=self.image_directory,
+                                     file_extension_filter="JSON Files (*.json)"))
+
     def _set_d_source_recal(self):
         self.le_estimation_method.setEnabled(bool(self.d_source_recal))
 
@@ -850,18 +887,22 @@ class AbsolutePhaseWidget(GenericWidget):
         self._bp_box_3_1.setEnabled(bool(self.scan_best_focus))
 
     def _set_method(self):
-        if not self.method in ["WXST", "SPINNet", "SPINNetSD", "simple"]: MessageDialog.message(self, title="Input Error", message="Method must be 'WXST', 'SPINNet', 'SPINNetSD' or 'simple'", type="critical", width=500)
+        if not self.method in ["WXST", "SPINNet", "SPINNetSD", "simple", "WSVT"]: MessageDialog.message(self, title="Input Error", message="Method must be 'WXST', 'SPINNet', 'SPINNetSD', 'simple' or 'WSVT'", type="critical", width=500)
         else:
+            self._wsvt_box.setVisible(self.method == "WSVT")
             self.delta_f_h = self._delta_f_h.get(self.method, 0.0)
             self.delta_f_v = self._delta_f_v.get(self.method, 0.0)
             self.le_delta_f_h.setText(str(self.delta_f_h))
             self.le_delta_f_v.setText(str(self.delta_f_v))
 
     def _set_delta_f(self):
-        if not self.method in ["WXST", "SPINNet", "SPINNetSD", "simple"]: MessageDialog.message(self, title="Input Error", message="Method must be 'WXST', 'SPINNet', 'SPINNetSD' or 'simple'", type="critical", width=500)
+        if not self.method in ["WXST", "SPINNet", "SPINNetSD", "simple", "WSVT"]: MessageDialog.message(self, title="Input Error", message="Method must be 'WXST', 'SPINNet', 'SPINNetSD', 'simple' or 'WSVT'", type="critical", width=500)
         else:
             self._delta_f_h[self.method] = self.delta_f_h
             self._delta_f_v[self.method] = self.delta_f_v
+
+    def _set_wsvt_auto_sign(self):
+        self._wsvt_sign_box.setVisible(not self.wsvt_auto_sign)
 
     def _check_fields(self, raise_errors=True):
         pass
@@ -916,6 +957,14 @@ class AbsolutePhaseWidget(GenericWidget):
         data_analysis_configuration["correct_scale"] = self.correct_scale
         data_analysis_configuration["flat"] = self.flat_file if self.flat_file else None
         data_analysis_configuration["dark"] = self.dark_file if self.dark_file else None
+
+        # WSVT
+        data_analysis_configuration["wsvt_scan_positions_file"] = self.wsvt_scan_positions_file if self.wsvt_scan_positions_file else None
+        data_analysis_configuration["wsvt_n_scan"] = self.wsvt_n_scan
+        data_analysis_configuration["wsvt_auto_sign"] = self.wsvt_auto_sign
+        data_analysis_configuration["wsvt_sign_x"] = self.wsvt_sign_x
+        data_analysis_configuration["wsvt_sign_y"] = self.wsvt_sign_y
+        data_analysis_configuration["wsvt_position_units"] = self.wsvt_position_units
 
         back_propagation_configuration["kind"]         = self.kind
         back_propagation_configuration["rebinning_bp"] = self.rebinning_bp
@@ -1047,6 +1096,7 @@ class AbsolutePhaseWidget(GenericWidget):
                 MessageDialog.message(self, title="Input Error", message=str(error.args[0]), type="critical", width=500)
                 if DEBUG_MODE: raise error
             except Exception as exception:
+                traceback.print_exc()
                 MessageDialog.message(self, title="Unexpected Exception", message=str(exception.args[0]), type="critical", width=700)
                 if DEBUG_MODE: raise exception
             finally:

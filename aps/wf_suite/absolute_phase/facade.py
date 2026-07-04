@@ -68,4 +68,6 @@ class IAbsolutePhaseAnalyzer():
     @abc.abstractmethod
     def wait_image_processing_to_end(self, **kwargs): raise NotImplementedError
     @abc.abstractmethod
+    def process_images_WSVT(self, data_collection_directory: str = None, **kwargs): raise NotImplementedError
+    @abc.abstractmethod
     def back_propagate_wavefront(self, image_index: int, data_collection_directory: str = None, **kwargs) -> dict: raise NotImplementedError

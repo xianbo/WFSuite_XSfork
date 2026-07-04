@@ -6,3 +6,8 @@
 /wf_suite.egg-info/
 /.idea/
 /TEST/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class

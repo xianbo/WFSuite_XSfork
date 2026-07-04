@@ -283,6 +283,10 @@ class _AbsolutePhaseManager(IAbsolutePhaseManager, Receiver, Sender):
             else:                    pixel_size = ws.PIXEL_SIZE
             kwargs["pixel_size"] = pixel_size
 
+            file_name_type = initialization_parameters.get_parameter("file_name_type", 0)
+            if file_name_type == 1:
+                kwargs["index_digits"] = initialization_parameters.get_parameter("index_digits_custom")
+
         image_transfer_matrix, is_new_mask = self.__absolute_phase_analyzer.generate_simulated_mask(image_index_for_mask=image_index_for_mask, **kwargs)
 
         if not is_new_mask: raise ValueError("Simulated Mask is already present in the Wavefront Image Directory")
@@ -290,6 +294,13 @@ class _AbsolutePhaseManager(IAbsolutePhaseManager, Receiver, Sender):
 
     def process_image(self, initialization_parameters: ScriptData):
         self.__set_absolute_phase_analyzer_ready(initialization_parameters)
+
+        absolute_phase_analyzer_configuration = initialization_parameters.get_parameter("absolute_phase_analyzer_configuration")
+        data_analysis_configuration = absolute_phase_analyzer_configuration["data_analysis"]
+        method = data_analysis_configuration.get("method", "WXST")
+
+        if method == "WSVT":
+            return self._process_images_WSVT(initialization_parameters)
 
         wavefront_sensor_mode = initialization_parameters.get_parameter("wavefront_sensor_mode")
         image_index           = 1 if wavefront_sensor_mode == 0 else initialization_parameters.get_parameter("image_index")
@@ -307,7 +318,37 @@ class _AbsolutePhaseManager(IAbsolutePhaseManager, Receiver, Sender):
             else:                     pixel_size = ws.PIXEL_SIZE
             kwargs["pixel_size"] = pixel_size
 
+            file_name_type = initialization_parameters.get_parameter("file_name_type", 0)
+            if file_name_type == 1:
+                kwargs["index_digits"] = initialization_parameters.get_parameter("index_digits_custom")
+
         return self.__absolute_phase_analyzer.process_image(image_index=image_index, **kwargs)
+
+    def _process_images_WSVT(self, initialization_parameters: ScriptData):
+        wavefront_sensor_mode = initialization_parameters.get_parameter("wavefront_sensor_mode")
+        pixel_size_type       = initialization_parameters.get_parameter("pixel_size_type", 0)
+
+        if wavefront_sensor_mode == 1 and pixel_size_type == 1:
+            pixel_size = initialization_parameters.get_parameter("pixel_size_custom", ws.PIXEL_SIZE)
+        else:
+            pixel_size = ws.PIXEL_SIZE
+
+        kwargs = {
+            "use_dark": initialization_parameters.get_parameter("use_dark", False),
+            "use_flat": initialization_parameters.get_parameter("use_flat", False),
+            "save_images": initialization_parameters.get_parameter("save_images", True),
+            "pixel_size": pixel_size,
+        }
+
+        # Forward index_digits for offline mode (same as process_image)
+        if wavefront_sensor_mode == 0:
+            kwargs["index_digits"] = initialization_parameters.get_parameter("index_digits")
+        else:
+            file_name_type = initialization_parameters.get_parameter("file_name_type", 0)
+            if file_name_type == 1:
+                kwargs["index_digits"] = initialization_parameters.get_parameter("index_digits_custom")
+
+        return self.__absolute_phase_analyzer.process_images_WSVT(**kwargs)
 
     def back_propagate(self, initialization_parameters: ScriptData, **kwargs):
         self.__set_absolute_phase_analyzer_ready(initialization_parameters)
@@ -327,6 +368,10 @@ class _AbsolutePhaseManager(IAbsolutePhaseManager, Receiver, Sender):
             if pixel_size_type == 1:  pixel_size = initialization_parameters.get_parameter("pixel_size_custom", ws.PIXEL_SIZE)
             else:                     pixel_size = ws.PIXEL_SIZE
             kwargs["pixel_size"] = pixel_size
+
+            file_name_type = initialization_parameters.get_parameter("file_name_type", 0)
+            if file_name_type == 1:
+                kwargs["index_digits"] = initialization_parameters.get_parameter("index_digits_custom")
 
         return self.__absolute_phase_analyzer.back_propagate_wavefront(image_index=image_index, **kwargs)
 
