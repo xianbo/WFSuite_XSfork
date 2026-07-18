@@ -425,7 +425,7 @@ class AbsolutePhaseWidget(GenericWidget):
         self._wsvt_box = gui.widgetBox(wa_box_6, "", width=wa_box_6.width() - 20, height=110, orientation="vertical")
 
         wsvt_file_box = gui.widgetBox(self._wsvt_box, "", width=self._wsvt_box.width() - 10, height=30, orientation='horizontal', addSpace=False)
-        self._le_wsvt_scan_positions_file = gui.lineEdit(wsvt_file_box, self, "wsvt_scan_positions_file", "Scan Positions (.json)", labelWidth=labels_width_1, orientation='horizontal', valueType=str)
+        self._le_wsvt_scan_positions_file = gui.lineEdit(wsvt_file_box, self, "wsvt_scan_positions_file", "Scan Positions (.json)", labelWidth=labels_width_1-150, orientation='horizontal', valueType=str)
         gui.button(wsvt_file_box, self, "...", width=30, callback=self._set_wsvt_scan_positions_file)
 
         wsvt_row_1 = gui.widgetBox(self._wsvt_box, "", width=self._wsvt_box.width() - 10, height=30, orientation='horizontal')
