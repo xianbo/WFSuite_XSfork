@@ -89,60 +89,16 @@ from aps.wf_suite.absolute_phase.legacy.WXST_simplified import save_figure, save
 lock = threading.Lock()
 
 
-def _prep_for_xcorr(img, smooth_bg=0):
-    """
-    Clean an image so it can be safely used for phase cross-correlation.
-
-    Flat/dark corrected images frequently contain NaN/inf (from division by
-    (flat - dark) == 0), dead pixels (0) or hot pixels (spikes). These corrupt
-    the FFT used by phase_cross_correlation and give meaningless shift estimates.
-
-    This routine:
-        1. replaces non-finite values with the median of the finite pixels,
-        2. robustly clips dead/hot outliers using percentile bounds,
-        3. optionally removes slow intensity variation (residual flat-field) to
-           emphasize the speckle pattern,
-        4. removes the mean.
-    """
-    out = np.asarray(img, dtype=np.float64)
-
-    # 1. remove non-finite values
-    finite = np.isfinite(out)
-    if not finite.all():
-        med = np.median(out[finite]) if finite.any() else 0.0
-        out = np.where(finite, out, med)
-
-    # 2. clip dead/hot pixels using robust percentile bounds
-    lo, hi = np.percentile(out, [0.5, 99.5])
-    if hi > lo:
-        out = np.clip(out, lo, hi)
-
-    # 3. high-pass to emphasize speckle (remove residual slow variation)
-    if smooth_bg and smooth_bg > 1:
-        size = int(smooth_bg)
-        if size < min(out.shape):
-            out = out - snd.uniform_filter(out, size=size)
-
-    # 4. zero-mean
-    out = out - np.mean(out)
-    return out
-
-
 def execute_process_images_WSVT(**arguments):
     """
     WSVT-based absolute phase measurement.
 
     Algorithm:
         1. Load scan positions from JSON file
-        2. Load all measured images from image_directory (needed for pattern search)
-        3. Generate simulated detector image (I_simu_whole) using first image + PatternSearch,
-           which also determines/loads the source distance (d_sv, d_sh)
-        4. Scale the scan positions to the detector plane using the geometric magnification
-           (d_prop + d_source) / d_source, then auto-detect the sign convention from the
-           flat/dark-corrected first two images (moved here so it uses corrected images and
-           the projected scan shift)
-        5. Create reference stack by shifting I_simu_whole by the projected scan positions,
-           then crop both measured and reference stacks
+        2. Load all measured images from image_directory
+        3. Generate simulated detector image (I_simu_whole) using first image + PatternSearch
+        4. Create reference stack by shifting I_simu_whole by scan positions
+        5. Crop both measured and reference stacks
         6. Run WSVT solver
         7. Save results
 
@@ -272,17 +228,68 @@ def execute_process_images_WSVT(**arguments):
     # Use first n_scan images
     img_stack = img_stack_all[:n_scan].astype(np.float32)
 
-    # ===================== Sign convention (auto-detection deferred) =====================
-    # NOTE (Modification 1): the auto sign detection is intentionally performed later,
-    # inside the reference-stack generation block, AFTER:
-    #   - the flat/dark correction is set up (so the sign is decided from corrected images), and
-    #   - the source distance (d_sv, d_sh) is known (so the expected scan shift can be scaled
-    #     to the detector plane by the geometric magnification, see Modification 2).
+    # ===================== Auto-detect sign convention =====================
     sign_detection_info = {
         'auto_sign': bool(args.auto_sign),
         'sign_x': args.sign_x,
         'sign_y': args.sign_y,
     }
+
+    if args.auto_sign and n_scan >= 2:
+        prColor('Auto-detecting sign convention from first two images...', 'cyan')
+        from skimage.registration import phase_cross_correlation
+
+        # Measure actual pixel shift between image 0 and image 1
+        try:
+            measured_shift, _, _ = phase_cross_correlation(
+                img_stack[0], img_stack[1], upsample_factor=10, normalization=None)
+        except TypeError:
+            measured_shift, _, _ = phase_cross_correlation(
+                img_stack[0], img_stack[1], upsample_factor=10)
+
+        # measured_shift is [row_shift, col_shift] = [dy, dx] (image 1 relative to image 0)
+        measured_dy = float(measured_shift[0])
+        measured_dx = float(measured_shift[1])
+
+        # Expected shift from scan positions (in pixels, without sign convention)
+        expected_dx_px = float((x_positions_m[1] - x_positions_m[0]) / args.p_x)
+        expected_dy_px = float((y_positions_m[1] - y_positions_m[0]) / args.p_x)
+
+        sign_detection_info['measured_dx_px'] = measured_dx
+        sign_detection_info['measured_dy_px'] = measured_dy
+        sign_detection_info['expected_dx_px'] = expected_dx_px
+        sign_detection_info['expected_dy_px'] = expected_dy_px
+
+        # Determine sign: if measured and expected have same sign (product > 0), sign = -1;
+        # if opposite (product < 0), sign = +1.
+        # Only update if the position change is significant (> 0.5 pixel)
+        if abs(expected_dx_px) > 0.5 and abs(measured_dx) > 0.5:
+            args.sign_x = -1 if (measured_dx * expected_dx_px > 0) else 1
+            prColor('  Auto sign_x = {} (measured_dx={:.2f}px, expected_dx={:.2f}px)'.format(
+                args.sign_x, measured_dx, expected_dx_px), 'green')
+        else:
+            prColor('  X shift too small to determine sign (measured={:.2f}px, expected={:.2f}px), using sign_x={}'.format(
+                measured_dx, expected_dx_px, args.sign_x), 'yellow')
+
+        if abs(expected_dy_px) > 0.5 and abs(measured_dy) > 0.5:
+            args.sign_y = -1 if (measured_dy * expected_dy_px > 0) else 1
+            prColor('  Auto sign_y = {} (measured_dy={:.2f}px, expected_dy={:.2f}px)'.format(
+                args.sign_y, measured_dy, expected_dy_px), 'green')
+        else:
+            prColor('  Y shift too small to determine sign (measured={:.2f}px, expected={:.2f}px), using sign_y={}'.format(
+                measured_dy, expected_dy_px, args.sign_y), 'yellow')
+
+        sign_detection_info['sign_x'] = args.sign_x
+        sign_detection_info['sign_y'] = args.sign_y
+
+    elif args.auto_sign:
+        prColor('Cannot auto-detect sign with fewer than 2 images, using manual sign_x={}, sign_y={}'.format(
+            args.sign_x, args.sign_y), 'yellow')
+
+    print('========================================')
+    print('  sign_x = {}'.format(args.sign_x))
+    print('  sign_y = {}'.format(args.sign_y))
+    print('========================================')
 
     # ===================== Step 3: Generate simulated detector image =====================
     # Use the first image for pattern search (same as single-shot)
@@ -469,15 +476,7 @@ def execute_process_images_WSVT(**arguments):
             prColor('Propagating pattern to detector plane...', 'cyan')
             I_coh, I_det, I_prop = pattern_find.pattern_prop(I_pattern)
 
-            # Modification 2: store the source distance used for the propagation so the scan
-            # position projection magnification can be recovered when this file is reloaded.
-            np.savez(os.path.join(saving_path, 'propagated_pattern.npz'),
-                     I_coh=I_coh,
-                     d_sv=para_simulation['d_sv'],
-                     d_sh=para_simulation['d_sh'],
-                     d_sv_ini=para_simulation['d_sv_ini'],
-                     d_sh_ini=para_simulation['d_sh_ini'],
-                     d_prop=para_simulation['d_prop'])
+            np.savez(os.path.join(saving_path, 'propagated_pattern.npz'), I_coh=I_coh)
         elif not _propagated_patternDet_exists:
             prColor('Loading propagated pattern: {}'.format(args.propagated_pattern), 'green')
             data_content = np.load(args.propagated_pattern)
@@ -503,117 +502,18 @@ def execute_process_images_WSVT(**arguments):
                 I_img_central, I_coh, image_transfer_matrix, center_shift)
 
             prColor('Saving simulated pattern (det plane)...', 'cyan')
-            # Modification 2: store the (searched) source distance with the mask so the scan
-            # position projection magnification stays consistent when this file is reloaded.
             np.savez(os.path.join(saving_path, 'propagated_patternDet.npz'),
                      I_simu_whole=I_simu_whole,
                      displace_x_offset=displace_x_offset,
-                     displace_y_offset=displace_y_offset,
-                     d_sv=para_simulation['d_sv'],
-                     d_sh=para_simulation['d_sh'],
-                     d_sv_ini=para_simulation['d_sv_ini'],
-                     d_sh_ini=para_simulation['d_sh_ini'],
-                     d_prop=para_simulation['d_prop'])
+                     displace_y_offset=displace_y_offset)
         else:
             prColor('Loading simulated pattern at detector plane: {}'.format(args.propagated_patternDet), 'green')
             data_content = np.load(args.propagated_patternDet)
             I_simu_whole = data_content['I_simu_whole']
             displace_x_offset = data_content['displace_x_offset']
             displace_y_offset = data_content['displace_y_offset']
-            # Modification 2: recover the (searched) source distance stored with the mask so the
-            # scan-position magnification is consistent with the loaded simulated reference.
-            if 'd_sv' in data_content.files:
-                para_simulation['d_sv'] = float(data_content['d_sv'])
-                para_simulation['d_sh'] = float(data_content['d_sh'])
-                if 'd_sv_ini' in data_content.files:
-                    para_simulation['d_sv_ini'] = float(data_content['d_sv_ini'])
-                    para_simulation['d_sh_ini'] = float(data_content['d_sh_ini'])
-                else:
-                    para_simulation['d_sv_ini'] = para_simulation.get('d_sv_ini', para_simulation['d_sv'])
-                    para_simulation['d_sh_ini'] = para_simulation.get('d_sh_ini', para_simulation['d_sh'])
-                prColor('  Loaded source distance from mask file: d_sv={}, d_sh={}'.format(
-                    para_simulation['d_sv'], para_simulation['d_sh']), 'green')
 
         prColor('I_simu_whole shape: {}'.format(I_simu_whole.shape), 'green')
-
-        # ===================== Step 4a (Modification 2): scan-position projection scaling =====================
-        # The scan positions are recorded at the MASK plane. For a diverging (or converging)
-        # beam, the pattern shadow on the DETECTOR plane is magnified geometrically: the mask
-        # sits at distance d_sv/d_sh from the source and the detector at d_sv/d_sh + d_prop, so a
-        # mask translation of delta projects to delta * (d_source + d_prop) / d_source on the
-        # detector. d_sv/d_sh are the searched (or loaded) source distances from the pattern step.
-        d_sv_used = para_simulation['d_sv']
-        d_sh_used = para_simulation['d_sh']
-        mag_v = (para_simulation['d_prop'] + d_sv_used) / d_sv_used
-        mag_h = (para_simulation['d_prop'] + d_sh_used) / d_sh_used
-        prColor('Scan-position projection magnification: mag_y={:.5f} (d_sv={}), mag_x={:.5f} (d_sh={})'.format(
-            mag_v, d_sv_used, mag_h, d_sh_used), 'green')
-
-        # ===================== Step 4b (Modification 1+3): auto-detect sign convention =====================
-        # Performed here (not at load time) so it uses flat/dark-corrected images and the
-        # projected (magnified) expected scan shift.
-        if args.auto_sign and n_scan >= 2:
-            prColor('Auto-detecting sign convention from first two (flat/dark-corrected) images...', 'cyan')
-            from skimage.registration import phase_cross_correlation
-
-            # Flat/dark-corrected, cropped first two frames, cleaned so that NaN/inf, dead or hot
-            # pixels do not corrupt the FFT-based shift estimate (Modification 3).
-            img0_corr = boundary_crop((img_stack[0] - dark) / (flat - dark))
-            img1_corr = boundary_crop((img_stack[1] - dark) / (flat - dark))
-            bg_size = max(3, int(round(10 * para_simulation['pattern_size'] / para_simulation['p_x'])))
-            a0 = _prep_for_xcorr(img0_corr, smooth_bg=bg_size)
-            a1 = _prep_for_xcorr(img1_corr, smooth_bg=bg_size)
-
-            # Measure actual pixel shift between (cleaned) image 0 and image 1
-            try:
-                measured_shift, _, _ = phase_cross_correlation(
-                    a0, a1, upsample_factor=10, normalization=None)
-            except TypeError:
-                measured_shift, _, _ = phase_cross_correlation(
-                    a0, a1, upsample_factor=10)
-
-            # measured_shift is [row_shift, col_shift] = [dy, dx] (image 1 relative to image 0)
-            measured_dy = float(measured_shift[0])
-            measured_dx = float(measured_shift[1])
-
-            # Expected shift from scan positions, projected to the detector plane (in pixels)
-            expected_dx_px = float((x_positions_m[1] - x_positions_m[0]) * mag_h / para_simulation['p_x'])
-            expected_dy_px = float((y_positions_m[1] - y_positions_m[0]) * mag_v / para_simulation['p_x'])
-
-            sign_detection_info['measured_dx_px'] = measured_dx
-            sign_detection_info['measured_dy_px'] = measured_dy
-            sign_detection_info['expected_dx_px'] = expected_dx_px
-            sign_detection_info['expected_dy_px'] = expected_dy_px
-
-            # Determine sign: if measured and expected have same sign (product > 0), sign = -1;
-            # if opposite (product < 0), sign = +1.
-            # Only update if the position change is significant (> 0.5 pixel)
-            if abs(expected_dx_px) > 0.5 and abs(measured_dx) > 0.5:
-                args.sign_x = -1 if (measured_dx * expected_dx_px > 0) else 1
-                prColor('  Auto sign_x = {} (measured_dx={:.2f}px, expected_dx={:.2f}px)'.format(
-                    args.sign_x, measured_dx, expected_dx_px), 'green')
-            else:
-                prColor('  X shift too small to determine sign (measured={:.2f}px, expected={:.2f}px), using sign_x={}'.format(
-                    measured_dx, expected_dx_px, args.sign_x), 'yellow')
-
-            if abs(expected_dy_px) > 0.5 and abs(measured_dy) > 0.5:
-                args.sign_y = -1 if (measured_dy * expected_dy_px > 0) else 1
-                prColor('  Auto sign_y = {} (measured_dy={:.2f}px, expected_dy={:.2f}px)'.format(
-                    args.sign_y, measured_dy, expected_dy_px), 'green')
-            else:
-                prColor('  Y shift too small to determine sign (measured={:.2f}px, expected={:.2f}px), using sign_y={}'.format(
-                    measured_dy, expected_dy_px, args.sign_y), 'yellow')
-
-            sign_detection_info['sign_x'] = args.sign_x
-            sign_detection_info['sign_y'] = args.sign_y
-        elif args.auto_sign:
-            prColor('Cannot auto-detect sign with fewer than 2 images, using manual sign_x={}, sign_y={}'.format(
-                args.sign_x, args.sign_y), 'yellow')
-
-        print('========================================')
-        print('  sign_x = {}'.format(args.sign_x))
-        print('  sign_y = {}'.format(args.sign_y))
-        print('========================================')
 
         # --- Create reference stack by shifting I_simu_whole ---
         prColor('Creating reference stack by shifting simulated image...', 'cyan')
@@ -627,9 +527,9 @@ def execute_process_images_WSVT(**arguments):
         ref_stack = np.zeros((n_scan, I_simu_cropped.shape[0], I_simu_cropped.shape[1]), dtype=np.float32)
 
         for i in range(n_scan):
-            # Relative shift from position 0, projected to the detector plane (Modification 2)
-            dx_m = (x_positions_m[i] - x_positions_m[0]) * mag_h
-            dy_m = (y_positions_m[i] - y_positions_m[0]) * mag_v
+            # Relative shift from position 0
+            dx_m = x_positions_m[i] - x_positions_m[0]
+            dy_m = y_positions_m[i] - y_positions_m[0]
 
             # Convert to pixel shifts with sign convention
             # Note: scipy.ndimage.shift takes [row_shift, col_shift] = [dy, dx]
@@ -645,7 +545,7 @@ def execute_process_images_WSVT(**arguments):
                 ref_stack[i] = boundary_crop(I_shifted)
 
             if args.verbose and (i < 3 or i == n_scan - 1):
-                prColor('  Scan {}: projected dx={:.4f}mm, dy={:.4f}mm -> dx_px={:.2f}, dy_px={:.2f}'.format(
+                prColor('  Scan {}: dx={:.4f}mm, dy={:.4f}mm -> dx_px={:.2f}, dy_px={:.2f}'.format(
                     i, dx_m * 1e3, dy_m * 1e3, dx_px, dy_px), 'cyan')
 
         # --- Crop and correct measured image stack ---
@@ -694,11 +594,6 @@ def execute_process_images_WSVT(**arguments):
                  n_scan=n_scan,
                  sign_x=args.sign_x,
                  sign_y=args.sign_y,
-                 d_sv=para_simulation['d_sv'],
-                 d_sh=para_simulation['d_sh'],
-                 d_prop=para_simulation['d_prop'],
-                 mag_x=mag_h,
-                 mag_y=mag_v,
                  image_transfer_matrix=np.array(image_transfer_matrix))
 
         # Save reference info as JSON (include speckle_shift for back-propagation compatibility)
@@ -731,14 +626,6 @@ def execute_process_images_WSVT(**arguments):
         n_scan = min(n_scan, ref_stack.shape[0])
         ref_stack = ref_stack[:n_scan]
         img_stack_cropped = img_stack_cropped[:n_scan]
-
-        # Recover the sign convention baked into the saved reference stack for reporting
-        if 'sign_x' in data_content.files:
-            args.sign_x = int(data_content['sign_x'])
-            args.sign_y = int(data_content['sign_y'])
-            sign_detection_info['sign_x'] = args.sign_x
-            sign_detection_info['sign_y'] = args.sign_y
-            sign_detection_info['auto_sign'] = False  # sign is fixed by the saved stack
 
         prColor('Loaded reference stack: {} images, shape {}'.format(
             ref_stack.shape[0], ref_stack.shape[1:]), 'green')
