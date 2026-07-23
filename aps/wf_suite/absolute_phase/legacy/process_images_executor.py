@@ -1507,7 +1507,9 @@ def execute_process_image(**arguments):
                        data_dict={'avg_source_d_x': float(avg_source_d_x),
                                   'avg_source_d_y': float(avg_source_d_y),
                                   'avg_radius_x':   float(avg_radius_x),
-                                  'avg_radius_y':   float(avg_radius_y)})
+                                  'avg_radius_y':   float(avg_radius_y),
+                                  'x_scaling':      float(x_scaling),
+                                  'y_scaling':      float(y_scaling)})
             if generate_simulated_mask: shutil.copy(os.path.join(args.result_folder,          'result.json'),
                                                     os.path.join(para_pattern['saving_path'], 'result.json'))
 
@@ -1541,7 +1543,13 @@ def execute_process_image(**arguments):
                             'line_phase_x': line_phase[1],
                             'line_displace_x': line_displace[1],
                             'line_curve_x': line_curve_filter[1]},
-                      path_folder=args.result_folder)
+                      path_folder=args.result_folder,
+                      metadata={'p_x':        float(para_simulation['p_x']),
+                                'x_scaling':  float(x_scaling),
+                                'y_scaling':  float(y_scaling),
+                                'energy':     float(args.energy),
+                                'wavelength': float(c_w),
+                                'd_prop':     float(para_simulation['d_prop'])})
 
             result = ProcessImageResult(args.mode, intensity, phase, line_phase, line_displace, line_curve_filter)
         elif args.mode == 'centralLine':
@@ -1610,6 +1618,8 @@ def execute_process_image(**arguments):
                        file_name='result',
                        data_dict={'avg_source_d_x': float(avg_source_d_x),
                                   'avg_source_d_y': float(avg_source_d_y),
+                                  'x_scaling':      float(x_scaling),
+                                  'y_scaling':      float(y_scaling),
                                   })
             if generate_simulated_mask: shutil.copy(os.path.join(args.result_folder,          'result.json'),
                                                     os.path.join(para_pattern['saving_path'], 'result.json'))
@@ -1621,7 +1631,13 @@ def execute_process_image(**arguments):
                             'line_phase_x': line_phase[1],
                             'line_displace_x': line_displace[1],
                             'line_curve_x': line_curve_filter[1]},
-                      path_folder=args.result_folder)
+                      path_folder=args.result_folder,
+                      metadata={'p_x':        float(para_simulation['p_x']),
+                                'x_scaling':  float(x_scaling),
+                                'y_scaling':  float(y_scaling),
+                                'energy':     float(args.energy),
+                                'wavelength': float(c_w),
+                                'd_prop':     float(para_simulation['d_prop'])})
 
             result = ProcessImageResult(args.mode, [int_x, int_y], None, line_phase, line_displace, line_curve_filter)
 

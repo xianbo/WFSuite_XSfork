@@ -682,6 +682,8 @@ class WXST:
                 'wavelength': self.wavelength,
                 'p_x': self.p_x*self.scaling_x,
                 'p_y': self.p_x*self.scaling_y,
+                'scaling_x': self.scaling_x,
+                'scaling_y': self.scaling_y,
                 'd': self.z,
                 'cpu_cores': self.n_cores,
                 'n_group': self.n_group,

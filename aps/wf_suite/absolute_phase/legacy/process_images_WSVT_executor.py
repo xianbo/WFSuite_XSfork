@@ -881,6 +881,8 @@ def execute_process_images_WSVT(**arguments):
                    'avg_source_d_y': float(avg_source_d_y),
                    'avg_radius_x':   float(avg_radius_x),
                    'avg_radius_y':   float(avg_radius_y),
+                   'x_scaling':      float(x_scaling),
+                   'y_scaling':      float(y_scaling),
                    'sign_detection': sign_detection_info}
     write_json(result_path=result_folder,
                file_name='result',
@@ -918,7 +920,13 @@ def execute_process_images_WSVT(**arguments):
                     'line_phase_x': line_phase[1],
                     'line_displace_x': line_displace[1],
                     'line_curve_x': line_curve_filter[1]},
-              path_folder=result_folder)
+              path_folder=result_folder,
+              metadata={'p_x':        float(para_simulation['p_x']),
+                        'x_scaling':  float(x_scaling),
+                        'y_scaling':  float(y_scaling),
+                        'energy':     float(args.energy),
+                        'wavelength': float(c_w),
+                        'd_prop':     float(para_simulation['d_prop'])})
 
     result = ProcessImageResult('area', intensity, phase, line_phase, line_displace, line_curve_filter)
 
