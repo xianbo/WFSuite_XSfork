@@ -595,6 +595,27 @@ def normalize(v):
 def normalize_std(v):
     return (v - np.mean(v)) / np.std(v)
 
+# [CONTRAST NORMALIZATION EXPERIMENT] (ADDED) toggle between the original
+# min-max normalization (matches only the two extreme values) and a z-score
+# normalization (matches mean/contrast) before the WXST/simple speckle
+# tracking, whose core metric (dist_numba) is raw SSD and therefore sensitive
+# to contrast, unlike the NCC/ECC-based matching used everywhere else.
+# Set to 'zscore' to try it; 'minmax' reproduces the original behavior exactly.
+# ZSCORE_CLIP_SIGMA controls the [0,255] mapping for 'zscore': z-score is
+# unbounded, so +/-ZSCORE_CLIP_SIGMA standard deviations are clipped to the
+# ends of the range before rescaling. This also makes 'zscore' more robust
+# than the original min-max, which is fully dictated by two single extreme
+# pixels (one hot/dead pixel collapses the whole dynamic range); clipping
+# ignores rare outliers while still matching contrast via the std.
+PRE_TRACKING_NORMALIZE = 'minmax'   # 'minmax' (original) or 'zscore' (experimental)
+ZSCORE_CLIP_SIGMA = 3.0
+
+def pre_tracking_normalize(v):
+    if PRE_TRACKING_NORMALIZE == 'zscore':
+        z = np.clip(normalize_std(v), -ZSCORE_CLIP_SIGMA, ZSCORE_CLIP_SIGMA)
+        return (z + ZSCORE_CLIP_SIGMA) / (2 * ZSCORE_CLIP_SIGMA) * 255
+    return normalize(v) * 255
+
 def clipped_zoom(img, zoom_factor, **kwargs):
     '''
         Center-zoom a 2D array by zoom_factor=(zy, zx) and return an array of
@@ -1006,8 +1027,9 @@ def do_recal_d_source(I_img_raw, I_img, para_pattern, pattern_find, image_transf
         displace_y_offset = displace_y_offset - np.mean(displace_y_offset)
         displace_x_offset = displace_x_offset - np.mean(displace_x_offset)
 
-        I_img = normalize(I_img) * 255
-        I_simu = normalize(I_simu) * 255
+        # [CONTRAST NORMALIZATION EXPERIMENT] (CHANGED) was: normalize(...)*255
+        I_img = pre_tracking_normalize(I_img)
+        I_simu = pre_tracking_normalize(I_simu)
 
         prColor('speckle tracking mode: area. Will use the whole cropping area for calculation.', 'cyan')
         displace_y, displace_x, _, _, _ = speckle_tracking(I_simu, I_img, para_XST_simple, displace_offset=[displace_y_offset, displace_x_offset])
@@ -1750,8 +1772,9 @@ def execute_process_image(**arguments):
 
     print("I_simu_whole:", I_simu_whole.shape, "I_simu:", I_simu.shape, "I_img_raw:", I_img_raw.shape, "I_img:", I_img.shape, "Extend_boundary:", extend_boundary)
 
-    I_img  = normalize(I_img) * 255
-    I_simu = normalize(I_simu) * 255
+    # [CONTRAST NORMALIZATION EXPERIMENT] (CHANGED) was: normalize(...)*255
+    I_img  = pre_tracking_normalize(I_img)
+    I_simu = pre_tracking_normalize(I_simu)
 
     # -------------------------------- do alignment ----------------------------------------------
 
