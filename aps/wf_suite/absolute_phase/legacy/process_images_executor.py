@@ -596,47 +596,68 @@ def normalize_std(v):
     return (v - np.mean(v)) / np.std(v)
 
 def clipped_zoom(img, zoom_factor, **kwargs):
+    '''
+        Center-zoom a 2D array by zoom_factor=(zy, zx) and return an array of
+        the SAME shape as img: zero-padded on any axis that zoomed out
+        (factor < 1), center-cropped on any axis that zoomed in (factor > 1).
+
+        [CLIPPED_ZOOM FIX] (CHANGED) the previous implementation chose
+        "zooming in" vs "zooming out" ONCE using only zoom_factor[0], then
+        applied that single branch's bounding-box arithmetic to BOTH axes.
+        PatternSearch.pattern_search calls this as
+        clipped_zoom(img, (1/sy, 1/sx)) with sx, sy from the affine scale fit,
+        and sx/sy routinely land on opposite sides of 1.0 (one axis wants to
+        grow, the other to shrink). In that case the old code could compute a
+        target width/height on one axis LARGER than the source while in the
+        "zooming out" (zero-pad) branch, driving a negative center offset and
+        crashing with e.g.
+            "could not broadcast input array from shape (a,b) into shape (a,c)"
+        -- or, in the "zooming in" (crop) branch, silently returning an array
+        SMALLER than img.shape via numpy's tolerant out-of-range slicing,
+        corrupting downstream alignment (and, for d_source_recal's
+        'simple_speckle' method, the source-distance estimate) without
+        raising at all. Below, the zoom-in/zoom-out decision -- and the
+        resulting crop or pad -- is made INDEPENDENTLY per axis, so any
+        combination of zy, zx (including straddling 1.0) is handled
+        correctly. For isotropic zoom_factor (the common case, zy and zx on
+        the same side of 1), the result is the same as before.
+    '''
     h, w = img.shape[:2]
+    zy, zx = float(zoom_factor[0]), float(zoom_factor[1])
 
-    # For multichannel images we don't want to apply the zoom factor to the RGB
-    # dimension, so instead we create a tuple of zoom factors, one per array
-    # dimension, with 1's for any trailing dimensions after the width and height.
+    if zy == 1 and zx == 1:
+        return img
 
-    # Zooming out
-    if zoom_factor[0] < 1:
+    # Source window: axes that are zooming IN (>1) need a smaller source crop
+    # so the zoomed result doesn't overshoot the canvas; axes zooming OUT
+    # (<=1) use the full source extent and are zero-padded back afterward.
+    sh = min(h, int(np.round(h / zy))) if zy > 1 else h
+    sw = min(w, int(np.round(w / zx))) if zx > 1 else w
+    stop = (h - sh) // 2
+    sleft = (w - sw) // 2
 
-        # Bounding box of the zoomed-out image within the output array
-        zh = int(np.round(h * zoom_factor[0]))
-        zw = int(np.round(w * zoom_factor[1]))
-        top = (h - zh) // 2
-        left = (w - zw) // 2
+    zoomed = snd.zoom(img[stop:stop + sh, sleft:sleft + sw], (zy, zx),
+                      **kwargs)
+    zh, zw = zoomed.shape[:2]
 
-        # Zero-padding
-        out = np.zeros_like(img)
-        out[top:top + zh, left:left + zw] = snd.zoom(img, zoom_factor,
-                                                     **kwargs)
+    # Trim any axis that came out >= target size (zoom-in, or rounding
+    # overshoot), independently per axis.
+    if zh >= h:
+        row0 = (zh - h) // 2
+        zoomed = zoomed[row0:row0 + h, :]
+    if zw >= w:
+        col0 = (zw - w) // 2
+        zoomed = zoomed[:, col0:col0 + w]
 
-    # Zooming in
-    elif zoom_factor[0] > 1:
+    zh, zw = zoomed.shape[:2]
+    if zh == h and zw == w:
+        return zoomed
 
-        # Bounding box of the zoomed-in region within the input array
-        zh = int(np.round(h / zoom_factor[0]))
-        zw = int(np.round(w / zoom_factor[1]))
-        top = (h - zh) // 2
-        left = (w - zw) // 2
-
-        out = snd.zoom(img[top:top + zh, left:left + zw], zoom_factor,
-                       **kwargs)
-
-        # `out` might still be slightly larger than `img` due to rounding, so
-        # trim off any extra pixels at the edges
-        trim_top = ((out.shape[0] - h) // 2)
-        trim_left = ((out.shape[1] - w) // 2)
-        out = out[trim_top:trim_top + h, trim_left:trim_left + w]
-
-    # If zoom_factor == 1, just return the input array
-    else:
-        out = img
+    # Remaining axis/axes (zoom-out) are smaller than the canvas: zero-pad.
+    out = np.zeros((h, w) + img.shape[2:], dtype=img.dtype)
+    top = (h - zh) // 2
+    left = (w - zw) // 2
+    out[top:top + zh, left:left + zw] = zoomed
     return out
 
 def cv2_clipped_zoom(img, zoom_factor=0):
@@ -932,11 +953,29 @@ def do_recal_d_source(I_img_raw, I_img, para_pattern, pattern_find, image_transf
     if para_pattern['propagated_pattern'] is None:
         prColor('MESSAGE: pattern image,  ' + para_pattern['pattern_path'], 'green')
         I_pattern = np.load(para_pattern['pattern_path']).astype(np.float32)
-        I_pattern = (1 - I_pattern)
 
         # propagate the pattern to the detector
         prColor('generating simulated pattern...', 'cyan')
-        I_coh, _, _ = pattern_find.pattern_prop(I_pattern)
+        # [MASK EXPOSURE MODEL] (CHANGED) the original two lines below were:
+        #     I_pattern = (1 - I_pattern)
+        #     I_coh, _, _ = pattern_find.pattern_prop(I_pattern)
+        # The source-distance recalculation now uses the SAME reference pattern
+        # (and therefore the same exposure model/bias) as the main matching path,
+        # so d_source_recal is consistent with the biased mask. With the default
+        # (exposure_model=None) this reproduces the original behavior exactly.
+        # I_pattern here is the raw mask (absorbing feature = 1, BEFORE inversion).
+        # para_pattern carries the exposure_* settings; .get(...) keeps this
+        # backward-compatible if an older para_pattern dict lacks those keys.
+        I_coh, _, _, _ = generate_reference_pattern(
+            pattern_find, I_pattern, I_measured=I_img_raw,
+            exposure_model=para_pattern.get('exposure_model'),
+            exposure_bias=para_pattern.get('exposure_bias'),
+            corner_sigma=para_pattern.get('exposure_corner_sigma', 0.25),
+            supersample=para_pattern.get('exposure_supersample', 8),
+            estimate=para_pattern.get('exposure_estimate', 'match_quality'),
+            bias_grid=para_pattern.get('exposure_bias_grid'),
+            img_transfer=image_transfer_matrix,
+            result_folder=result_folder)
 
     if para_pattern['propagated_patternDet'] is None:
         # use central part of the raw image to generate the simulated detector reference image
@@ -1042,6 +1081,292 @@ class ProcessImageResult:
             'line_curve': self.__line_curve
         }
 
+# ============================================================================
+# [MASK EXPOSURE MODEL]  (ADDED -- new standalone functions, 2026)
+# ----------------------------------------------------------------------------
+# The binary mask .npy files store 1 array element per fabricated feature and
+# assume an ideal ~50% fill factor. Real e-beam-written + gold-electroplated
+# masks are over/under-exposed and over/under-plated, so every feature edge is
+# shifted isotropically: a square island grows into a bigger square and, for
+# large bias, rounds toward a disk. These helpers apply that edge-bias +
+# corner-rounding to the mask BEFORE propagation, and can estimate the bias
+# from the measured image by maximizing the pattern-match correlation.
+#
+# Numerical model (see generate_reference_pattern):
+#   'ctr'      Constant-Threshold Resist model: blur the ideal layout with a
+#              Gaussian process point-spread (sigma -> corner rounding) and
+#              threshold it. The threshold is derived from the requested edge
+#              shift, so `bias` is a physical edge displacement, not a level.
+#   'distance' Signed-distance / morphological CD-bias: shift every edge by a
+#              constant distance via the signed distance transform. Exact
+#              isotropic edge move with disk corner rounding.
+#
+# `bias` is the signed edge shift as a FRACTION of one feature (pattern_size);
+# +bias grows the absorbing (gold=1) features (over-exposure / over-plating),
+# -bias shrinks them.
+#
+# Because features are 1 element, the model runs on a supersampled copy; the
+# caller sets pattern_find.pattern_pixel = pattern_size/supersample around the
+# propagation so the final propagation array size is unchanged.
+# ============================================================================
+
+def apply_mask_exposure_model(mask, bias=0.0, model='ctr', corner_sigma=0.25,
+                              supersample=8, scale=None, base_pitch=None):
+    '''
+        Apply an isotropic fabrication edge-bias / corner-rounding to a binary
+        mask that is stored at 1 element per feature (gold feature = 1).
+
+        input:
+            mask         : 2D array, binary, absorbing feature = 1.
+            bias         : signed edge shift as a fraction of one feature.
+                           +grows features, -shrinks them.
+            model        : 'ctr' or 'distance'.
+            corner_sigma : corner-rounding radius as a fraction of one feature.
+            supersample  : integer up-sampling factor of the fine grid.
+            scale        : pattern_pixel/p_x. If given, the fine grid is forced
+                           to be at least this fine so modeled sub-feature
+                           detail survives the propagation resampling.
+            base_pitch   : original pattern_pixel (m); used to return eff_pitch.
+        return:
+            fine_mask    : float32 binary mask on the supersampled grid
+                           (still gold feature = 1).
+            eff_pitch    : effective pattern pixel of the fine grid
+                           (= base_pitch/supersample) or None if base_pitch is
+                           None. Assign it to pattern_find.pattern_pixel before
+                           pattern_prop, then restore, to keep the propagation
+                           array size unchanged.
+    '''
+    from scipy.ndimage import gaussian_filter, distance_transform_edt
+    from scipy.special import erf
+
+    mask = (np.asarray(mask) > 0.5).astype(np.float32)
+
+    ss = int(max(1, supersample))
+    # guarantee the fine grid resolves at least the propagation up-scale
+    if scale is not None:
+        ss = int(max(ss, np.ceil(scale)))
+
+    if ss > 1:
+        fine = np.repeat(np.repeat(mask, ss, axis=0), ss, axis=1)
+    else:
+        fine = mask.copy()
+
+    shift_px = float(bias) * ss                     # edge shift, fine elements
+    sigma_px = max(1e-6, float(corner_sigma) * ss)  # rounding, fine elements
+
+    if model == 'distance':
+        # signed distance, positive inside features (fine elements)
+        d_in = distance_transform_edt(fine)
+        d_out = distance_transform_edt(1.0 - fine)
+        signed = d_in - d_out
+        biased = (signed + shift_px) >= 0.0
+        if corner_sigma and corner_sigma > 0:
+            biased = gaussian_filter(biased.astype(np.float32), sigma_px) >= 0.5
+        fine_mask = biased.astype(np.float32)
+    else:  # 'ctr' constant-threshold resist (default)
+        blurred = gaussian_filter(fine, sigma_px)
+        # A Gaussian-blurred straight edge crosses level t at a distance
+        # sigma*sqrt(2)*erfinv(1-2t) from the nominal edge, so to realize the
+        # requested edge shift we invert: t = 0.5*(1 - erf(shift/(sigma*sqrt2))).
+        t = 0.5 * (1.0 - erf(shift_px / (sigma_px * np.sqrt(2.0))))
+        t = float(np.clip(t, 1e-4, 1.0 - 1e-4))
+        fine_mask = (blurred >= t).astype(np.float32)
+
+    eff_pitch = None if base_pitch is None else base_pitch / ss
+    return fine_mask, eff_pitch
+
+
+def measure_occupation_ratio(image):
+    '''
+        Rough occupation (dark-area) fraction of an image via an Otsu-like
+        threshold. NOTE: a measured detector image is a near-field speckle /
+        diffraction pattern, not a direct shadow, so this is only a coarse
+        indicator of the mask fill factor. `generate_reference_pattern` uses
+        the correlation-based estimator by default; this helper is provided for
+        the fast 'occupation' method and for diagnostics.
+    '''
+    v = np.asarray(image, dtype=np.float64)
+    v = v[np.isfinite(v)]
+    if v.size == 0:
+        return float('nan')
+    # Otsu threshold
+    hist, edges = np.histogram(v, bins=256)
+    hist = hist.astype(np.float64)
+    centers = (edges[:-1] + edges[1:]) / 2.0
+    w = np.cumsum(hist)
+    total = w[-1]
+    if total == 0:
+        return float('nan')
+    mu = np.cumsum(hist * centers)
+    mu_t = mu[-1]
+    with np.errstate(divide='ignore', invalid='ignore'):
+        between = (mu_t * w - mu) ** 2 / (w * (total - w))
+    between[~np.isfinite(between)] = -1
+    thr = centers[int(np.argmax(between))]
+    return float(np.mean(v <= thr))
+
+
+def _propagate_biased_mask(pattern_find, mask_gold, bias, model,
+                           corner_sigma, supersample):
+    '''
+        Build a biased fine mask (gold=1), invert to the transmission
+        convention used by pattern_prop (1 - mask), temporarily switch the
+        propagation pitch so the output array size is unchanged, propagate, and
+        restore the pitch. Returns (I_coh, I_det, I_prop).
+    '''
+    scale = pattern_find.pattern_pixel / pattern_find.p_x
+    fine_mask, eff_pitch = apply_mask_exposure_model(
+        mask_gold, bias=bias, model=model, corner_sigma=corner_sigma,
+        supersample=supersample, scale=scale,
+        base_pitch=pattern_find.pattern_pixel)
+    I_pattern = (1 - fine_mask)  # same inversion the executors apply
+    backup_pitch = pattern_find.pattern_pixel
+    try:
+        pattern_find.pattern_pixel = eff_pitch
+        I_coh, I_det, I_prop = pattern_find.pattern_prop(I_pattern)
+    finally:
+        pattern_find.pattern_pixel = backup_pitch  # always restore
+    return I_coh, I_det, I_prop
+
+
+def _coarse_match_score(pattern_find, I_measured, I_candidate, img_transfer):
+    '''
+        Brightness-invariant match score between a measured image and a
+        candidate simulated pattern, used to compare exposure-bias candidates.
+
+        Mirrors PatternSearch.pattern_search_coarse (central 200x200 template,
+        same image_transfer) but scores with a NORMALIZED cross-correlation
+        (cv2 TM_CCOEFF_NORMED, peak in [-1, 1]). This is essential across
+        candidates: the raw correlate2d magnitude in pattern_search_coarse
+        scales with each candidate's intensity/fill and would otherwise pick
+        the brightest pattern instead of the best-matching geometry.
+    '''
+    import cv2  # here to avoid conflict with PyQt
+
+    I_candidate = pattern_find.image_transfer(I_candidate, img_transfer[0],
+                                              img_transfer[1], img_transfer[2])
+    m, n = I_measured.shape
+    r0, r1 = m // 2 - 100, m // 2 + 100
+    c0, c1 = n // 2 - 100, n // 2 + 100
+    template = (normalize(I_measured[r0:r1, c0:c1].astype(np.float32)) * 255).astype(np.float32)
+    pattern = (normalize(I_candidate.astype(np.float32)) * 255).astype(np.float32)
+    if pattern.shape[0] < template.shape[0] or pattern.shape[1] < template.shape[1]:
+        return -1.0
+    res = cv2.matchTemplate(pattern, template, cv2.TM_CCOEFF_NORMED)
+    _, max_val, _, _ = cv2.minMaxLoc(res)
+    return float(max_val)
+
+
+def generate_reference_pattern(pattern_find, mask_gold, I_measured=None,
+                               exposure_model=None, exposure_bias=None,
+                               corner_sigma=0.25, supersample=8,
+                               estimate='match_quality', bias_grid=None,
+                               img_transfer=None, result_folder=None):
+    '''
+        Single entry point that builds the propagated reference pattern from a
+        binary mask, optionally applying the fabrication exposure model.
+
+        Modes:
+            exposure_model in (None, 'off')  -> current behavior EXACTLY:
+                 I_coh,I_det,I_prop = pattern_find.pattern_prop(1 - mask_gold)
+            exposure_model in ('ctr','distance') and exposure_bias is not None
+                 -> MANUAL: apply the model with the given fixed bias.
+            exposure_model in ('ctr','distance') and exposure_bias is None
+                 -> AUTO: estimate the bias from I_measured.
+
+        Auto estimation is location/transfer-agnostic: the image transfer is
+        found once on the nominal (bias=0) pattern, then the bias that maximizes
+        the pattern_search_coarse correlation (or, for estimate='occupation',
+        best matches the measured occupation) over a small bias_grid is chosen.
+
+        input:
+            pattern_find : PatternSearch instance.
+            mask_gold    : binary mask, absorbing feature = 1 (BEFORE inversion).
+            I_measured   : measured image (for auto estimation).
+            exposure_model, exposure_bias, corner_sigma, supersample : see
+                           apply_mask_exposure_model.
+            estimate     : 'match_quality' (default) or 'occupation'.
+            bias_grid    : iterable of candidate biases for auto mode.
+            img_transfer : optional [flip,rot,transpose]; found automatically
+                           if None.
+        return:
+            I_coh, I_det, I_prop, info
+            info = {'model','bias','estimate','diagnostics'}
+    '''
+    # ---- off: byte-identical to the original two lines -------------------
+    if exposure_model in (None, 'off', False):
+        I_pattern = (1 - mask_gold)
+        I_coh, I_det, I_prop = pattern_find.pattern_prop(I_pattern)
+        return I_coh, I_det, I_prop, {'model': 'off', 'bias': 0.0,
+                                      'estimate': None, 'diagnostics': None}
+
+    # ---- manual: fixed bias ---------------------------------------------
+    if exposure_bias is not None:
+        prColor('MASK EXPOSURE MODEL ({}): manual bias = {}'.format(
+            exposure_model, exposure_bias), 'cyan')
+        I_coh, I_det, I_prop = _propagate_biased_mask(
+            pattern_find, mask_gold, exposure_bias, exposure_model,
+            corner_sigma, supersample)
+        return I_coh, I_det, I_prop, {'model': exposure_model,
+                                      'bias': float(exposure_bias),
+                                      'estimate': 'manual',
+                                      'diagnostics': None}
+
+    # ---- auto: estimate the bias ----------------------------------------
+    if bias_grid is None:
+        bias_grid = np.linspace(-0.25, 0.25, 5)
+    bias_grid = list(bias_grid)
+
+    prColor('MASK EXPOSURE MODEL ({}): auto-estimating bias over {} '
+            'candidates by "{}" ...'.format(exposure_model, len(bias_grid),
+                                            estimate), 'cyan')
+
+    cache = {}  # bias -> (I_coh, I_det, I_prop)
+
+    def _prop(b):
+        if b not in cache:
+            cache[b] = _propagate_biased_mask(
+                pattern_find, mask_gold, b, exposure_model, corner_sigma,
+                supersample)
+        return cache[b]
+
+    # find the image transfer once, on the nominal pattern (bias closest to 0)
+    b0 = min(bias_grid, key=lambda b: abs(b))
+    I_coh_0 = _prop(b0)[0]
+    if img_transfer is None and I_measured is not None:
+        img_transfer = pattern_find.img_transfer_search(
+            I_measured, I_coh_0, result_folder)
+    if img_transfer is None:
+        img_transfer = [1, 0, 0]
+
+    scores = []
+    if estimate == 'occupation' and I_measured is not None:
+        target = measure_occupation_ratio(I_measured)
+        for b in bias_grid:
+            occ = measure_occupation_ratio(_prop(b)[0])
+            scores.append(-abs(occ - target))  # higher is better
+    else:  # 'match_quality' (default): normalized cross-correlation peak
+        for b in bias_grid:
+            scores.append(_coarse_match_score(
+                pattern_find, I_measured, _prop(b)[0], img_transfer))
+
+    best_i = int(np.argmax(scores))
+    best_bias = float(bias_grid[best_i])
+    diagnostics = {'bias_grid': [float(b) for b in bias_grid],
+                   'scores': [float(s) for s in scores],
+                   'img_transfer': list(img_transfer)}
+    prColor('MASK EXPOSURE MODEL: chosen bias = {} (score {})'.format(
+        best_bias, scores[best_i]), 'green')
+    if best_i in (0, len(bias_grid) - 1):
+        prColor('WARNING: best bias is at the edge of bias_grid; consider '
+                'widening the grid.', 'red')
+
+    I_coh, I_det, I_prop = _prop(best_bias)
+    return I_coh, I_det, I_prop, {'model': exposure_model, 'bias': best_bias,
+                                  'estimate': estimate,
+                                  'diagnostics': diagnostics}
+
+
 def execute_process_image(**arguments):
     arguments["data_directory"]        = arguments.get("data_directory", os.path.join(os.path.abspath(os.curdir), "Data"))
     arguments["img"]                   = arguments.get("img", './images/sample_00001.tif') # path to sample image
@@ -1075,6 +1400,16 @@ def execute_process_image(**arguments):
     arguments["d_source_recal"]        = arguments.get("d_source_recal", False) # recalculate the source distance or not. If so, will use the simple method to recalculate the source distance.
     arguments["propagator"]            = arguments.get("propagator", 'RS') # propagation method for near-field diffraction
     arguments["estimation_method"]     = arguments.get("estimation_method", 'geometric') # propagation method for near-field diffraction
+
+    # [MASK EXPOSURE MODEL] (ADDED) mask fabrication over/under-exposure modeling.
+    # Defaults keep the ORIGINAL behavior unchanged (model off). See
+    # generate_reference_pattern / apply_mask_exposure_model above.
+    arguments["exposure_model"]        = arguments.get("exposure_model", None)          # None/'off' (default), 'ctr', or 'distance'
+    arguments["exposure_bias"]         = arguments.get("exposure_bias", None)           # None -> auto-estimate; float -> fixed edge shift (fraction of feature)
+    arguments["exposure_corner_sigma"] = arguments.get("exposure_corner_sigma", 0.25)   # corner rounding radius (fraction of feature)
+    arguments["exposure_supersample"]  = arguments.get("exposure_supersample", 8)       # fine-grid up-sampling factor
+    arguments["exposure_estimate"]     = arguments.get("exposure_estimate", 'match_quality')  # 'match_quality' or 'occupation'
+    arguments["exposure_bias_grid"]    = arguments.get("exposure_bias_grid", None)      # candidate biases for auto mode; None -> linspace(-0.25,0.25,5)
 
     # add for the WFS calibration
     """
@@ -1123,7 +1458,14 @@ def execute_process_image(**arguments):
         'saving_path':       file_folder
         if args.saving_path is None else args.saving_path,  # if propagated_pattern is None, save the simulated to this path
         'propagated_patternDet': args.propagated_patternDet,  # propagated transformed simulated reference image at detector, if None, will search from the propagated pattern.
-        'process_after_mask' : args.process_after_mask
+        'process_after_mask' : args.process_after_mask,
+        # [MASK EXPOSURE MODEL] (ADDED) fabrication over/under-exposure config
+        'exposure_model'        : args.exposure_model,
+        'exposure_bias'         : args.exposure_bias,
+        'exposure_corner_sigma' : args.exposure_corner_sigma,
+        'exposure_supersample'  : args.exposure_supersample,
+        'exposure_estimate'     : args.exposure_estimate,
+        'exposure_bias_grid'    : args.exposure_bias_grid,
     }
 
     para_simulation = {
@@ -1317,15 +1659,33 @@ def execute_process_image(**arguments):
     # to find the pattern from the reference image
     pattern_find = PatternSearch(ini_para=para_simulation)
 
+    # [MASK EXPOSURE MODEL] (ADDED) holds the chosen exposure model/bias for saving
+    mask_exposure_info = None
+
     if para_pattern['propagated_pattern'] is None:
         prColor('MESSAGE: pattern image,  ' + para_pattern['pattern_path'],
                 'green')
         I_pattern = np.load(para_pattern['pattern_path']).astype(np.float32)
-        I_pattern = (1 - I_pattern)
 
         # propagate the pattern to the detector
         prColor('generating simulated pattern...', 'cyan')
-        I_coh, I_det, I_prop = pattern_find.pattern_prop(I_pattern)
+        # [MASK EXPOSURE MODEL] (CHANGED) the original two lines below were:
+        #     I_pattern = (1 - I_pattern)
+        #     I_coh, I_det, I_prop = pattern_find.pattern_prop(I_pattern)
+        # They are now routed through generate_reference_pattern, which with the
+        # default (exposure_model=None) reproduces exactly that behavior, and
+        # otherwise applies the fabrication over/under-exposure model. I_pattern
+        # here is the raw mask (absorbing feature = 1, BEFORE inversion).
+        I_coh, I_det, I_prop, mask_exposure_info = generate_reference_pattern(
+            pattern_find, I_pattern, I_measured=I_img_raw,
+            exposure_model=para_pattern['exposure_model'],
+            exposure_bias=para_pattern['exposure_bias'],
+            corner_sigma=para_pattern['exposure_corner_sigma'],
+            supersample=para_pattern['exposure_supersample'],
+            estimate=para_pattern['exposure_estimate'],
+            bias_grid=para_pattern['exposure_bias_grid'],
+            img_transfer=image_transfer_matrix,
+            result_folder=result_folder)
 
         np.savez(os.path.join(para_pattern['saving_path'], 'propagated_pattern.npz'), I_coh=I_coh)
     elif para_pattern['propagated_patternDet'] is None:
@@ -1509,7 +1869,10 @@ def execute_process_image(**arguments):
                                   'avg_radius_x':   float(avg_radius_x),
                                   'avg_radius_y':   float(avg_radius_y),
                                   'x_scaling':      float(x_scaling),
-                                  'y_scaling':      float(y_scaling)})
+                                  'y_scaling':      float(y_scaling),
+                                  # [MASK EXPOSURE MODEL] (ADDED) chosen fabrication exposure model/bias
+                                  'exposure_model': (mask_exposure_info or {}).get('model'),
+                                  'exposure_bias':  (mask_exposure_info or {}).get('bias')})
             if generate_simulated_mask: shutil.copy(os.path.join(args.result_folder,          'result.json'),
                                                     os.path.join(para_pattern['saving_path'], 'result.json'))
 
@@ -1620,6 +1983,9 @@ def execute_process_image(**arguments):
                                   'avg_source_d_y': float(avg_source_d_y),
                                   'x_scaling':      float(x_scaling),
                                   'y_scaling':      float(y_scaling),
+                                  # [MASK EXPOSURE MODEL] (ADDED) chosen fabrication exposure model/bias
+                                  'exposure_model': (mask_exposure_info or {}).get('model'),
+                                  'exposure_bias':  (mask_exposure_info or {}).get('bias'),
                                   })
             if generate_simulated_mask: shutil.copy(os.path.join(args.result_folder,          'result.json'),
                                                     os.path.join(para_pattern['saving_path'], 'result.json'))

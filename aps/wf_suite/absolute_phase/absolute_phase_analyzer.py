@@ -81,6 +81,16 @@ PATTERN_TRANSMISSION  = ini_file.get_float_from_ini(  section="Mask", key="Patte
 RAN_MASK              = ini_file.get_string_from_ini( section="Mask", key="Pattern-Image",        default='RanMask5umB0.npy')
 PROPAGATION_DISTANCE  = ini_file.get_float_from_ini(  section="Mask", key="Propagation-Distance", default=500e-3)
 
+# [MASK EXPOSURE MODEL] (ADDED) fabrication over/under-exposure of the mask.
+# Defaults keep the model OFF, i.e. identical to previous behavior.
+EXPOSURE_MODEL        = ini_file.get_string_from_ini( section="Mask", key="Exposure-Model",        default="off")             # "off", "ctr", or "distance"
+EXPOSURE_AUTO         = ini_file.get_boolean_from_ini(section="Mask", key="Exposure-Auto",         default=True)              # True -> estimate bias from the image; False -> use Exposure-Bias
+EXPOSURE_BIAS         = ini_file.get_float_from_ini(  section="Mask", key="Exposure-Bias",         default=0.0)               # manual edge shift (fraction of a feature) when Exposure-Auto is False
+EXPOSURE_CORNER_SIGMA = ini_file.get_float_from_ini(  section="Mask", key="Exposure-Corner-Sigma", default=0.25)              # corner rounding radius (fraction of a feature)
+EXPOSURE_SUPERSAMPLE  = ini_file.get_int_from_ini(    section="Mask", key="Exposure-Supersample",  default=8)                 # fine-grid up-sampling factor
+EXPOSURE_ESTIMATE     = ini_file.get_string_from_ini( section="Mask", key="Exposure-Estimate",     default="match_quality")   # "match_quality" or "occupation"
+EXPOSURE_BIAS_GRID    = ini_file.get_list_from_ini(   section="Mask", key="Exposure-Bias-Grid",    default=[-0.25, -0.125, 0.0, 0.125, 0.25], _type=float)  # auto-search candidates
+
 ENERGY                = ini_file.get_float_from_ini(  section="Source", key="Energy",            default=12398.0)
 SOURCE_V              = ini_file.get_float_from_ini(  section="Source", key="Source-Size-V",     default=6.925e-6)
 SOURCE_H              = ini_file.get_float_from_ini(  section="Source", key="Source-Size-H",     default=0.333e-6)
@@ -182,6 +192,14 @@ def store():
     ini_file.set_value_at_ini(section="Mask", key="Pattern-Transmission", value=PATTERN_TRANSMISSION)
     ini_file.set_value_at_ini(section="Mask", key="Pattern-Image",        value=RAN_MASK)
     ini_file.set_value_at_ini(section="Mask", key="Propagation-Distance", value=PROPAGATION_DISTANCE)
+    # [MASK EXPOSURE MODEL] (ADDED)
+    ini_file.set_value_at_ini(section="Mask", key="Exposure-Model",        value=EXPOSURE_MODEL)
+    ini_file.set_value_at_ini(section="Mask", key="Exposure-Auto",         value=EXPOSURE_AUTO)
+    ini_file.set_value_at_ini(section="Mask", key="Exposure-Bias",         value=EXPOSURE_BIAS)
+    ini_file.set_value_at_ini(section="Mask", key="Exposure-Corner-Sigma", value=EXPOSURE_CORNER_SIGMA)
+    ini_file.set_value_at_ini(section="Mask", key="Exposure-Supersample",  value=EXPOSURE_SUPERSAMPLE)
+    ini_file.set_value_at_ini(section="Mask", key="Exposure-Estimate",     value=EXPOSURE_ESTIMATE)
+    ini_file.set_list_at_ini( section="Mask", key="Exposure-Bias-Grid",    values_list=EXPOSURE_BIAS_GRID)
 
     ini_file.set_value_at_ini(section="Source", key="Energy",               value=ENERGY)
     ini_file.set_value_at_ini(section="Source", key="Source-Size-V",        value=SOURCE_V)
@@ -495,6 +513,15 @@ def _process_image(data_collection_directory, file_name_prefix, mask_directory, 
                                  pattern_thickness=kwargs.get("pattern_thickness", PATTERN_THICKNESS),
                                  pattern_T=kwargs.get("pattern_transmission", PATTERN_TRANSMISSION),
                                  d_prop=kwargs.get("propagation_distance", PROPAGATION_DISTANCE),
+                                 # [MASK EXPOSURE MODEL] (ADDED) forward ini/kwargs to the executor;
+                                 # exposure_bias=None triggers auto-estimation.
+                                 exposure_model=kwargs.get("exposure_model", EXPOSURE_MODEL),
+                                 exposure_bias=(None if kwargs.get("exposure_auto", EXPOSURE_AUTO)
+                                                else kwargs.get("exposure_bias", EXPOSURE_BIAS)),
+                                 exposure_corner_sigma=kwargs.get("exposure_corner_sigma", EXPOSURE_CORNER_SIGMA),
+                                 exposure_supersample=kwargs.get("exposure_supersample", EXPOSURE_SUPERSAMPLE),
+                                 exposure_estimate=kwargs.get("exposure_estimate", EXPOSURE_ESTIMATE),
+                                 exposure_bias_grid=kwargs.get("exposure_bias_grid", EXPOSURE_BIAS_GRID),
                                  d_source_v=kwargs.get("source_distance_v", SOURCE_DISTANCE_V),
                                  d_source_h=kwargs.get("source_distance_h", SOURCE_DISTANCE_H),
                                  source_v=kwargs.get("source_size_v", SOURCE_V),
@@ -576,6 +603,15 @@ def _process_images_WSVT(data_collection_directory, file_name_prefix, mask_direc
         pattern_thickness=kwargs.get("pattern_thickness", PATTERN_THICKNESS),
         pattern_T=kwargs.get("pattern_transmission", PATTERN_TRANSMISSION),
         d_prop=kwargs.get("propagation_distance", PROPAGATION_DISTANCE),
+        # [MASK EXPOSURE MODEL] (ADDED) forward ini/kwargs to the WSVT executor;
+        # exposure_bias=None triggers auto-estimation.
+        exposure_model=kwargs.get("exposure_model", EXPOSURE_MODEL),
+        exposure_bias=(None if kwargs.get("exposure_auto", EXPOSURE_AUTO)
+                       else kwargs.get("exposure_bias", EXPOSURE_BIAS)),
+        exposure_corner_sigma=kwargs.get("exposure_corner_sigma", EXPOSURE_CORNER_SIGMA),
+        exposure_supersample=kwargs.get("exposure_supersample", EXPOSURE_SUPERSAMPLE),
+        exposure_estimate=kwargs.get("exposure_estimate", EXPOSURE_ESTIMATE),
+        exposure_bias_grid=kwargs.get("exposure_bias_grid", EXPOSURE_BIAS_GRID),
         d_source_v=kwargs.get("source_distance_v", SOURCE_DISTANCE_V),
         d_source_h=kwargs.get("source_distance_h", SOURCE_DISTANCE_H),
         source_v=kwargs.get("source_size_v", SOURCE_V),
@@ -659,6 +695,19 @@ def _generate_simulated_mask(data_collection_directory, file_name_prefix, mask_d
                               pattern_thickness=kwargs.get("pattern_thickness", PATTERN_THICKNESS),
                               pattern_T=kwargs.get("pattern_transmission", PATTERN_TRANSMISSION),
                               d_prop=kwargs.get("propagation_distance", PROPAGATION_DISTANCE),
+                              # [MASK EXPOSURE MODEL] (ADDED) forward ini/kwargs to the executor;
+                              # exposure_bias=None triggers auto-estimation. This call site
+                              # (_generate_simulated_mask, used by the "Generate Mask" GUI action)
+                              # was previously missing these entirely, so execute_process_image
+                              # fell back to its own internal default (exposure_model=None)
+                              # instead of the configured EXPOSURE_MODEL.
+                              exposure_model=kwargs.get("exposure_model", EXPOSURE_MODEL),
+                              exposure_bias=(None if kwargs.get("exposure_auto", EXPOSURE_AUTO)
+                                             else kwargs.get("exposure_bias", EXPOSURE_BIAS)),
+                              exposure_corner_sigma=kwargs.get("exposure_corner_sigma", EXPOSURE_CORNER_SIGMA),
+                              exposure_supersample=kwargs.get("exposure_supersample", EXPOSURE_SUPERSAMPLE),
+                              exposure_estimate=kwargs.get("exposure_estimate", EXPOSURE_ESTIMATE),
+                              exposure_bias_grid=kwargs.get("exposure_bias_grid", EXPOSURE_BIAS_GRID),
                               d_source_v=kwargs.get("source_distance_v", SOURCE_DISTANCE_V),
                               d_source_h=kwargs.get("source_distance_h", SOURCE_DISTANCE_H),
                               source_v=kwargs.get("source_size_v", SOURCE_V),

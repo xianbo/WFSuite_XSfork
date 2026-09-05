@@ -83,6 +83,7 @@ from aps.wf_suite.absolute_phase.legacy.process_images_executor import (
     image_translation,
     get_local_curvature,
     do_recal_d_source,
+    generate_reference_pattern,  # [MASK EXPOSURE MODEL] (ADDED)
 )
 from aps.wf_suite.absolute_phase.legacy.WXST_simplified import save_figure, save_figure_1D, save_data
 
@@ -194,6 +195,16 @@ def execute_process_images_WSVT(**arguments):
     arguments["show_alignFigure"]      = arguments.get("show_alignFigure", False)
     arguments["d_source_recal"]        = arguments.get("d_source_recal", False)   # recalculate source distance from pattern search
     arguments["estimation_method"]     = arguments.get("estimation_method", 'geometric')  # method for d_source recalculation: 'geometric' or 'simple_speckle'
+
+    # [MASK EXPOSURE MODEL] (ADDED) mask fabrication over/under-exposure modeling.
+    # Defaults keep the ORIGINAL behavior unchanged (model off). See
+    # generate_reference_pattern in process_images_executor.
+    arguments["exposure_model"]        = arguments.get("exposure_model", None)          # None/'off' (default), 'ctr', or 'distance'
+    arguments["exposure_bias"]         = arguments.get("exposure_bias", None)           # None -> auto-estimate; float -> fixed edge shift (fraction of feature)
+    arguments["exposure_corner_sigma"] = arguments.get("exposure_corner_sigma", 0.25)   # corner rounding radius (fraction of feature)
+    arguments["exposure_supersample"]  = arguments.get("exposure_supersample", 8)       # fine-grid up-sampling factor
+    arguments["exposure_estimate"]     = arguments.get("exposure_estimate", 'match_quality')  # 'match_quality' or 'occupation'
+    arguments["exposure_bias_grid"]    = arguments.get("exposure_bias_grid", None)      # candidate biases for auto mode; None -> linspace(-0.25,0.25,5)
     arguments["img_transfer_matrix"]   = arguments.get("img_transfer_matrix", [1, 0, 0])
     arguments["find_transferMatrix"]   = arguments.get("find_transferMatrix", False)
 
@@ -397,6 +408,10 @@ def execute_process_images_WSVT(**arguments):
     boundary_crop = lambda img: img[int(crop_edge[0]):int(crop_edge[1]),
                                     int(crop_edge[2]):int(crop_edge[3])]
 
+    # [MASK EXPOSURE MODEL] (ADDED) function-level default so result.json save
+    # below always has it, even when the reference stack is loaded from file.
+    mask_exposure_info = None
+
     if generate_ref_stack:
         # --- Need to generate the reference stack from scratch ---
 
@@ -415,6 +430,15 @@ def execute_process_images_WSVT(**arguments):
             'propagated_pattern': args.propagated_pattern,
             'propagated_patternDet': args.propagated_patternDet,
             'saving_path': saving_path,
+            # [MASK EXPOSURE MODEL] (ADDED) forward the exposure settings so the
+            # source-distance recalculation uses the SAME model/bias as the main
+            # matching path below (do_recal_d_source reads these via .get(...)).
+            'exposure_model'        : args.exposure_model,
+            'exposure_bias'         : args.exposure_bias,
+            'exposure_corner_sigma' : args.exposure_corner_sigma,
+            'exposure_supersample'  : args.exposure_supersample,
+            'exposure_estimate'     : args.exposure_estimate,
+            'exposure_bias_grid'    : args.exposure_bias_grid,
         }
 
         # Build a minimal para_XST dict (needed by do_recal_d_source signature, only used for simple_speckle method)
@@ -464,10 +488,25 @@ def execute_process_images_WSVT(**arguments):
         if not _propagated_pattern_exists:
             prColor('Loading mask pattern: {}'.format(args.pattern_path), 'green')
             I_pattern = np.load(args.pattern_path).astype(np.float32)
-            I_pattern = (1 - I_pattern)
 
             prColor('Propagating pattern to detector plane...', 'cyan')
-            I_coh, I_det, I_prop = pattern_find.pattern_prop(I_pattern)
+            # [MASK EXPOSURE MODEL] (CHANGED) the original two lines below were:
+            #     I_pattern = (1 - I_pattern)
+            #     I_coh, I_det, I_prop = pattern_find.pattern_prop(I_pattern)
+            # Routed through generate_reference_pattern: with the default
+            # (exposure_model=None) it reproduces exactly that behavior, and
+            # otherwise applies the fabrication over/under-exposure model.
+            # I_pattern here is the raw mask (absorbing feature = 1, BEFORE inversion).
+            I_coh, I_det, I_prop, mask_exposure_info = generate_reference_pattern(
+                pattern_find, I_pattern, I_measured=I_img_raw_norm,
+                exposure_model=args.exposure_model,
+                exposure_bias=args.exposure_bias,
+                corner_sigma=args.exposure_corner_sigma,
+                supersample=args.exposure_supersample,
+                estimate=args.exposure_estimate,
+                bias_grid=args.exposure_bias_grid,
+                img_transfer=image_transfer_matrix,
+                result_folder=result_folder)
 
             # Modification 2: store the source distance used for the propagation so the scan
             # position projection magnification can be recovered when this file is reloaded.
@@ -883,6 +922,9 @@ def execute_process_images_WSVT(**arguments):
                    'avg_radius_y':   float(avg_radius_y),
                    'x_scaling':      float(x_scaling),
                    'y_scaling':      float(y_scaling),
+                   # [MASK EXPOSURE MODEL] (ADDED) chosen fabrication exposure model/bias
+                   'exposure_model': (mask_exposure_info or {}).get('model'),
+                   'exposure_bias':  (mask_exposure_info or {}).get('bias'),
                    'sign_detection': sign_detection_info}
     write_json(result_path=result_folder,
                file_name='result',
