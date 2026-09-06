@@ -11,3 +11,13 @@
 __pycache__/
 *.py[cod]
 *$py.class
+
+# Local runtime config files (auto-generated per-machine state, resolved
+# relative to whatever directory a script/GUI is run from; not shared config)
+/.absolute_phase_analysis.json
+/.mask_flipper.json
+/.wavefront_sensor.json
+/.relative_metrology_analysis.json
+/.launcher.json
+/.GUI_absolute_phase.json
+/.GUI_wavefront_sensor.json
