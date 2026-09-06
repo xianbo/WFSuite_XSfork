@@ -814,7 +814,17 @@ def execute_process_images_WSVT(**arguments):
                        scaling_y=args.scaling_y,
                        crop=args.crop)
 
-    WSVT_solver.run(result_path=result_folder)
+    # [SKIP RAW WSVT DUMP] (CHANGED) was: WSVT_solver.run(result_path=result_folder)
+    # result_path only controls WSVT.run()'s own internal save block (writes
+    # WSVT_result.hdf5/.json with the solver's raw, pre-executor-correction
+    # displace/DPC/phase/transmission) -- it has no effect on the computation
+    # itself (self.solver()/self.solver_cuda() run first, unconditionally).
+    # This executor already saves its own final, corrected result set below
+    # (single_shot_1.hdf5 via save_data), so the raw WSVT_result dump is
+    # redundant here. Passing None skips it; relative_metrology's own
+    # WSVT_executor.py calls .run(result_path=...) independently and is
+    # unaffected by this change.
+    WSVT_solver.run(result_path=None)
 
     # ===================== Step 7: Extract and post-process results =====================
     # Following the same post-processing as execute_process_image (area mode)
