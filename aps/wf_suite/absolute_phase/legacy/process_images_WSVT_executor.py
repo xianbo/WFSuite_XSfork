@@ -70,7 +70,7 @@ from matplotlib import cm
 import matplotlib
 
 from aps.wf_suite.common.arguments import Args
-from aps.wf_suite.common.legacy.func import prColor, load_image, write_json, auto_crop, image_align
+from aps.wf_suite.common.legacy.func import prColor, load_image, write_json, auto_crop, image_align, read_h5
 from aps.wf_suite.common.legacy.gui_func import crop_gui
 from aps.wf_suite.common.legacy.integration import frankotchellappa
 from aps.wf_suite.relative_metrology.legacy.func import load_images
@@ -195,6 +195,11 @@ def execute_process_images_WSVT(**arguments):
     arguments["show_alignFigure"]      = arguments.get("show_alignFigure", False)
     arguments["d_source_recal"]        = arguments.get("d_source_recal", False)   # recalculate source distance from pattern search
     arguments["estimation_method"]     = arguments.get("estimation_method", 'geometric')  # method for d_source recalculation: 'geometric' or 'simple_speckle'
+
+    # [DETECTOR CALIBRATION] (ADDED) same mechanism as execute_process_image:
+    # optional h5 file with 'dx'/'dy' datasets (full detector size) giving a
+    # known systematic detector/WFS displacement error to subtract.
+    arguments["cali_path"]             = arguments.get("cali_path", None)
 
     # [MASK EXPOSURE MODEL] (ADDED) mask fabrication over/under-exposure modeling.
     # Defaults keep the ORIGINAL behavior unchanged (model off). See
@@ -848,6 +853,23 @@ def execute_process_images_WSVT(**arguments):
     displace_x_offset_cropped = displace_x_offset_cropped - np.mean(displace_x_offset_cropped)
     displace_x += displace_x_offset_cropped
     displace_y += displace_y_offset_cropped
+
+    # [DETECTOR CALIBRATION] (ADDED) subtract a known systematic detector/WFS
+    # displacement error, same mechanism and file format as execute_process_image
+    # in process_images_executor.py: an h5 file with 'dx'/'dy' datasets, full
+    # detector size. Applied here (after combining residual + geometric offset)
+    # rather than before, since WSVT has no offset-reuse across multiple
+    # speckle_tracking calls (unlike single-shot's centralLine mode) -- both
+    # placements are mathematically equivalent for WSVT's area-mode output.
+    if args.cali_path is not None:
+        prColor('load calibration data from file: {}'.format(args.cali_path), 'green')
+        dx_cali = boundary_crop(read_h5(args.cali_path, 'dx'))[hw:-hw, hw:-hw]
+        dy_cali = boundary_crop(read_h5(args.cali_path, 'dy'))[hw:-hw, hw:-hw]
+    else:
+        dx_cali = 0
+        dy_cali = 0
+    displace_x -= dx_cali
+    displace_y -= dy_cali
 
     # Compute wavelength (same as PatternSearch.c_w)
     c_w = sc.value('inverse meter-electron volt relationship') / args.energy

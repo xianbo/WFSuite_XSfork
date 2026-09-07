@@ -621,6 +621,8 @@ def _process_images_WSVT(data_collection_directory, file_name_prefix, mask_direc
         d_source_recal=kwargs.get("source_distance_recalculation", D_SOURCE_RECAL),
         estimation_method=kwargs.get("estimation_method", ESTIMATION_METHOD),
         propagator=kwargs.get("propagator", PROPAGATOR),
+        # [DETECTOR CALIBRATION] (ADDED) forward ini/kwargs to the WSVT executor.
+        cali_path=kwargs.get("calibration_path", CALIBRATION_PATH),
         img_transfer_matrix=kwargs.get("image_transfer_matrix", IMAGE_TRANSFER_MATRIX),
         find_transferMatrix=False,
         crop=kwargs.get("crop", CROP),
