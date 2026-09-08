@@ -178,7 +178,19 @@ def _process_image_WXST(**kwargs):
     arguments["verbose"]          = VERBOSE
     arguments["save_images"]      = SAVE_IMAGES
 
-    return execute_process_image(**(arguments | kwargs))
+    merged_arguments = arguments | kwargs
+    # [GPU CACHE RELEASE] (CHANGED) use try/finally so an exception raised
+    # anywhere inside execute_process_image (e.g. during result plotting,
+    # which runs after the GPU-heavy WXST computation) still releases the
+    # cache before the error propagates, instead of skipping it entirely.
+    try:
+        result = execute_process_image(**merged_arguments)
+    finally:
+        if merged_arguments.get("GPU", False):
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+    return result
 
 def _process_images_WSVT(**kwargs):
     arguments = {}
@@ -203,4 +215,14 @@ def _process_images_WSVT(**kwargs):
     arguments["verbose"]         = VERBOSE
     arguments["save_images"]     = SAVE_IMAGES
 
-    return execute_process_images(**(arguments | kwargs))
+    merged_arguments = arguments | kwargs
+    # [GPU CACHE RELEASE] (CHANGED) use try/finally -- see matching comment
+    # in _process_image_WXST above.
+    try:
+        result = execute_process_images(**merged_arguments)
+    finally:
+        if merged_arguments.get("use_GPU", False):
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+    return result

@@ -276,7 +276,9 @@ def execute_process_images(**arguments):
         XX, YY = np.meshgrid(
             np.arange(phase.shape[1]) * p_x * scaling_x * 1e6,
             np.arange(phase.shape[0]) * p_x * scaling_y * 1e6)
-        ax1.plot_surface(XX, YY, phase, cmap=cm.get_cmap('hot'))
+        # [BUGFIX] (CHANGED) was cm.get_cmap('hot') -- matplotlib.cm.get_cmap
+        # was deprecated in 3.7 and removed in 3.9, raising AttributeError.
+        ax1.plot_surface(XX, YY, phase, cmap=matplotlib.colormaps['hot'])
         ax1.set_xlabel('x [μm]')
         ax1.set_ylabel('y [μm]')
         ax1.set_zlabel('phase [rad]')

@@ -119,6 +119,22 @@ SPINNET_CONFIGURATION = ini_file.get_dict_from_ini(   section="Reconstruction", 
                                                                "SPINNetSD" : {"type": "PO", "folder": "SpeckleDisplacementNet_05-01_12hr_mirror_10k_EdgePad_Beta_2-5_04_18_2025", "model" : "best_model_epoch_3268_Val_0.00448.pt", "setting" : "training_results.json"}})
 
 USE_GPU               = ini_file.get_boolean_from_ini(section="Reconstruction", key="Use-Gpu",           default=False)
+# [GPU DEVICE SELECTION] (ADDED) which physical GPU CUDA_VISIBLE_DEVICES should
+# expose for batch processing. Default 1 matches a 2-GPU workstation where
+# device 0 drives the display and only device 1 is available for compute.
+GPU_DEVICE_INDEX      = ini_file.get_int_from_ini(    section="Reconstruction", key="Gpu-Device-Index",  default=1)
+# [GPU DEVICE SELECTION] (CHANGED) was set only inside process_images()'s
+# BATCH branch, which a normal single-image GUI "Run" never reaches (it calls
+# process_image() -> _process_image() directly, same bypass pattern as the
+# GPU cache-release bug). Set here instead, at module import time, so it's
+# guaranteed to run before ANY processing function -- and, crucially, before
+# any CUDA call in this process, since CUDA_VISIBLE_DEVICES only has an
+# effect if set before the first CUDA touch; once any torch.cuda call has run
+# in a process, the device selection is locked for that process's lifetime.
+# This means a NEW Gpu-Device-Index value only takes effect after a full
+# restart of the launcher process -- editing the json and re-running within
+# the same still-running session will not retroactively change it.
+os.environ["CUDA_VISIBLE_DEVICES"] = "{}".format(GPU_DEVICE_INDEX)
 USE_WAVELET           = ini_file.get_boolean_from_ini(section="Reconstruction", key="Use-Wavelet",       default=False)
 WAVELET_CUT           = ini_file.get_int_from_ini(    section="Reconstruction", key="Wavelet-Cut",       default=2)
 PYRAMID_LEVEL         = ini_file.get_int_from_ini(    section="Reconstruction", key="Pyramid-Level",     default=1)
@@ -268,6 +284,8 @@ def store():
     ini_file.set_value_at_ini(section="Reconstruction", key="Method",         value=METHOD)
     ini_file.set_dict_at_ini( section="Reconstruction", key="SPINNet-Configuration", values_dict=SPINNET_CONFIGURATION)
     ini_file.set_value_at_ini(section="Reconstruction", key="Use-Gpu",        value=USE_GPU)
+    # [GPU DEVICE SELECTION] (ADDED)
+    ini_file.set_value_at_ini(section="Reconstruction", key="Gpu-Device-Index", value=GPU_DEVICE_INDEX)
     ini_file.set_value_at_ini(section="Reconstruction", key="Use-Wavelet",    value=USE_WAVELET)
     ini_file.set_value_at_ini(section="Reconstruction", key="Wavelet-Cut",    value=WAVELET_CUT)
     ini_file.set_value_at_ini(section="Reconstruction", key="Pyramid-Level",  value=PYRAMID_LEVEL)
@@ -354,9 +372,15 @@ class AbsolutePhaseAnalyzer(IAbsolutePhaseAnalyzer):
                 elif pathlib.Path(file).suffix == ".hdf5" and self.__file_name_prefix in file: extension = ".hdf5"
                 else: continue
 
+                # [GPU CACHE RELEASE] moved into _process_image itself (called
+                # below), since it's the single shared function every caller
+                # funnels through -- fixing it there covers this loop too.
                 self.process_image(image_index=int(file.split(extension)[0][-index_digits:]), verbose=kwargs.get("verbose", False))
         else:
-            os.environ["CUDA_VISIBLE_DEVICES"] = "{}".format(1)
+            # [GPU DEVICE SELECTION] moved to module level (see GPU_DEVICE_INDEX
+            # above) since this BATCH branch is not the only, or even the
+            # normal, entry point -- setting it here alone left the common
+            # single-image "Run" path unaffected.
 
             self.__active_threads = [None] * n_threads
 
@@ -446,12 +470,17 @@ class ProcessingThread(Thread):
                     if len(image_indexes) < 5: n = 1
                     else:                      n = 5
 
-                    for image_index in image_indexes[0:n]: _process_image(self.__data_collection_directory,
-                                                                          self.__file_name_prefix,
-                                                                          self.__simulated_mask_directory,
-                                                                          self.__energy,
-                                                                          image_index,
-                                                                          **self.__kwargs)
+                    # [GPU CACHE RELEASE] moved into _process_image itself
+                    # (called here), since it's the single shared function
+                    # every caller funnels through -- fixing it there covers
+                    # this loop too.
+                    for image_index in image_indexes[0:n]:
+                        _process_image(self.__data_collection_directory,
+                                       self.__file_name_prefix,
+                                       self.__simulated_mask_directory,
+                                       self.__energy,
+                                       image_index,
+                                       **self.__kwargs)
             time.sleep(1)
 
         print('Thread #' + str(self.__thread_id) + ' completed')
@@ -493,64 +522,83 @@ def _process_image(data_collection_directory, file_name_prefix, mask_directory, 
     trained_model         = spinnet_configuration.get("model", "")
     setting_path          = spinnet_configuration.get("setting", "")
 
-    return execute_process_image(img=image_file_name,
-                                 image_data=image_data,
-                                 dark=dark,
-                                 flat=flat,
-                                 result_folder=result_folder,
-                                 data_directory=data_directory,
-                                 pattern_path=pattern_path,
-                                 propagated_pattern=propagated_pattern,
-                                 propagated_patternDet=propagated_patternDet,
-                                 saving_path=saving_path,
-                                 crop=kwargs.get("crop", CROP),
-                                 img_transfer_matrix=kwargs.get("image_transfer_matrix", IMAGE_TRANSFER_MATRIX),
-                                 find_transferMatrix=False, # always false for just processing images
-                                 p_x=kwargs.get("pixel_size", ws.PIXEL_SIZE),
-                                 det_res=kwargs.get("detector_resolution", ws.DETECTOR_RESOLUTION),
-                                 energy=energy,
-                                 pattern_size=kwargs.get("pattern_size", PATTERN_SIZE),
-                                 pattern_thickness=kwargs.get("pattern_thickness", PATTERN_THICKNESS),
-                                 pattern_T=kwargs.get("pattern_transmission", PATTERN_TRANSMISSION),
-                                 d_prop=kwargs.get("propagation_distance", PROPAGATION_DISTANCE),
-                                 # [MASK EXPOSURE MODEL] (ADDED) forward ini/kwargs to the executor;
-                                 # exposure_bias=None triggers auto-estimation.
-                                 exposure_model=kwargs.get("exposure_model", EXPOSURE_MODEL),
-                                 exposure_bias=(None if kwargs.get("exposure_auto", EXPOSURE_AUTO)
-                                                else kwargs.get("exposure_bias", EXPOSURE_BIAS)),
-                                 exposure_corner_sigma=kwargs.get("exposure_corner_sigma", EXPOSURE_CORNER_SIGMA),
-                                 exposure_supersample=kwargs.get("exposure_supersample", EXPOSURE_SUPERSAMPLE),
-                                 exposure_estimate=kwargs.get("exposure_estimate", EXPOSURE_ESTIMATE),
-                                 exposure_bias_grid=kwargs.get("exposure_bias_grid", EXPOSURE_BIAS_GRID),
-                                 d_source_v=kwargs.get("source_distance_v", SOURCE_DISTANCE_V),
-                                 d_source_h=kwargs.get("source_distance_h", SOURCE_DISTANCE_H),
-                                 source_v=kwargs.get("source_size_v", SOURCE_V),
-                                 source_h=kwargs.get("source_size_h", SOURCE_H),
-                                 correct_scale=kwargs.get("correct_scale", CORRECT_SCALE),
-                                 show_alignFigure=kwargs.get("show_align_figure", SHOW_ALIGN_FIGURE),
-                                 d_source_recal=False,  # for mask generation only,
-                                 propagator=kwargs.get("propagator", PROPAGATOR),
-                                 cali_path=kwargs.get("calibration_path", CALIBRATION_PATH),
-                                 mode=kwargs.get("mode", MODE),
-                                 lineWidth=kwargs.get("line_width", LINE_WIDTH),
-                                 rebinning=kwargs.get("rebinning", REBINNING),
-                                 down_sampling=kwargs.get("down_sampling", DOWN_SAMPLING),
-                                 crop_boundary=kwargs.get("crop_boundary", CROP_BOUNDARY),
-                                 method=kwargs.get("method", METHOD),
-                                 trained_model_type=trained_model_type,
-                                 trained_model_folder=trained_model_folder,
-                                 trained_model=trained_model,
-                                 setting_path=setting_path,
-                                 GPU=kwargs.get("use_gpu", USE_GPU),
-                                 use_wavelet=kwargs.get("use_wavelet", USE_WAVELET),
-                                 wavelet_lv_cut=kwargs.get("wavelet_lv_cut", WAVELET_CUT),
-                                 n_iter=kwargs.get("n_iterations", N_ITERATIONS),
-                                 pyramid_level=kwargs.get("pyramid_level", PYRAMID_LEVEL),
-                                 template_size=kwargs.get("template_size", TEMPLATE_SIZE),
-                                 window_searching=kwargs.get("window_search", WINDOW_SEARCH),
-                                 nCores=kwargs.get("n_cores", N_CORES),
-                                  nGroup=kwargs.get("n_group", N_GROUP),
-                                  verbose=verbose)
+    # [GPU CACHE RELEASE] (CHANGED) capture the result instead of returning
+    # directly, so we can release cached-but-unused GPU memory before
+    # returning. This is the single shared function every caller (GUI single
+    # "Run", BATCH loop, LIVE polling loop) funnels through, so fixing it here
+    # covers all of them -- unlike the earlier per-loop attempts in
+    # process_images()/ProcessingThread.run(), which never fire for a plain
+    # single-image GUI run since that path calls process_image() -> here
+    # directly, bypassing those loops entirely.
+    # try/finally so an exception raised anywhere inside execute_process_image
+    # (e.g. during result plotting, after the GPU-heavy computation already
+    # ran) still releases the cache before the error propagates.
+    use_gpu_flag = kwargs.get("use_gpu", USE_GPU)
+    try:
+        result = execute_process_image(img=image_file_name,
+                                     image_data=image_data,
+                                     dark=dark,
+                                     flat=flat,
+                                     result_folder=result_folder,
+                                     data_directory=data_directory,
+                                     pattern_path=pattern_path,
+                                     propagated_pattern=propagated_pattern,
+                                     propagated_patternDet=propagated_patternDet,
+                                     saving_path=saving_path,
+                                     crop=kwargs.get("crop", CROP),
+                                     img_transfer_matrix=kwargs.get("image_transfer_matrix", IMAGE_TRANSFER_MATRIX),
+                                     find_transferMatrix=False, # always false for just processing images
+                                     p_x=kwargs.get("pixel_size", ws.PIXEL_SIZE),
+                                     det_res=kwargs.get("detector_resolution", ws.DETECTOR_RESOLUTION),
+                                     energy=energy,
+                                     pattern_size=kwargs.get("pattern_size", PATTERN_SIZE),
+                                     pattern_thickness=kwargs.get("pattern_thickness", PATTERN_THICKNESS),
+                                     pattern_T=kwargs.get("pattern_transmission", PATTERN_TRANSMISSION),
+                                     d_prop=kwargs.get("propagation_distance", PROPAGATION_DISTANCE),
+                                     # [MASK EXPOSURE MODEL] (ADDED) forward ini/kwargs to the executor;
+                                     # exposure_bias=None triggers auto-estimation.
+                                     exposure_model=kwargs.get("exposure_model", EXPOSURE_MODEL),
+                                     exposure_bias=(None if kwargs.get("exposure_auto", EXPOSURE_AUTO)
+                                                    else kwargs.get("exposure_bias", EXPOSURE_BIAS)),
+                                     exposure_corner_sigma=kwargs.get("exposure_corner_sigma", EXPOSURE_CORNER_SIGMA),
+                                     exposure_supersample=kwargs.get("exposure_supersample", EXPOSURE_SUPERSAMPLE),
+                                     exposure_estimate=kwargs.get("exposure_estimate", EXPOSURE_ESTIMATE),
+                                     exposure_bias_grid=kwargs.get("exposure_bias_grid", EXPOSURE_BIAS_GRID),
+                                     d_source_v=kwargs.get("source_distance_v", SOURCE_DISTANCE_V),
+                                     d_source_h=kwargs.get("source_distance_h", SOURCE_DISTANCE_H),
+                                     source_v=kwargs.get("source_size_v", SOURCE_V),
+                                     source_h=kwargs.get("source_size_h", SOURCE_H),
+                                     correct_scale=kwargs.get("correct_scale", CORRECT_SCALE),
+                                     show_alignFigure=kwargs.get("show_align_figure", SHOW_ALIGN_FIGURE),
+                                     d_source_recal=False,  # for mask generation only,
+                                     propagator=kwargs.get("propagator", PROPAGATOR),
+                                     cali_path=kwargs.get("calibration_path", CALIBRATION_PATH),
+                                     mode=kwargs.get("mode", MODE),
+                                     lineWidth=kwargs.get("line_width", LINE_WIDTH),
+                                     rebinning=kwargs.get("rebinning", REBINNING),
+                                     down_sampling=kwargs.get("down_sampling", DOWN_SAMPLING),
+                                     crop_boundary=kwargs.get("crop_boundary", CROP_BOUNDARY),
+                                     method=kwargs.get("method", METHOD),
+                                     trained_model_type=trained_model_type,
+                                     trained_model_folder=trained_model_folder,
+                                     trained_model=trained_model,
+                                     setting_path=setting_path,
+                                     GPU=use_gpu_flag,
+                                     use_wavelet=kwargs.get("use_wavelet", USE_WAVELET),
+                                     wavelet_lv_cut=kwargs.get("wavelet_lv_cut", WAVELET_CUT),
+                                     n_iter=kwargs.get("n_iterations", N_ITERATIONS),
+                                     pyramid_level=kwargs.get("pyramid_level", PYRAMID_LEVEL),
+                                     template_size=kwargs.get("template_size", TEMPLATE_SIZE),
+                                     window_searching=kwargs.get("window_search", WINDOW_SEARCH),
+                                     nCores=kwargs.get("n_cores", N_CORES),
+                                      nGroup=kwargs.get("n_group", N_GROUP),
+                                      verbose=verbose)
+    finally:
+        if use_gpu_flag:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+    return result
 
 def _process_images_WSVT(data_collection_directory, file_name_prefix, mask_directory, energy, **kwargs):
     data_directory = DATA_DIRECTORY
@@ -580,68 +628,80 @@ def _process_images_WSVT(data_collection_directory, file_name_prefix, mask_direc
     simulated_ref_stack   = os.path.join(mask_directory, 'simulated_ref_stack.npz')
     saving_path           = mask_directory
 
-    return execute_process_images_WSVT(
-        image_directory=data_collection_directory,
-        scan_positions_file=kwargs.get("scan_positions_file", WSVT_SCAN_POSITIONS_FILE),
-        data_directory=data_directory,
-        result_folder=result_folder,
-        pattern_path=pattern_path,
-        propagated_pattern=propagated_pattern,
-        propagated_patternDet=propagated_patternDet,
-        simulated_ref_stack=simulated_ref_stack,
-        process_after_mask=True,
-        saving_path=saving_path,
-        n_scan=kwargs.get("n_scan", WSVT_N_SCAN),
-        sign_x=kwargs.get("sign_x", WSVT_SIGN_X),
-        sign_y=kwargs.get("sign_y", WSVT_SIGN_Y),
-        auto_sign=kwargs.get("auto_sign", WSVT_AUTO_SIGN),
-        position_units=kwargs.get("position_units", WSVT_POSITION_UNITS),
-        p_x=kwargs.get("pixel_size", ws.PIXEL_SIZE),
-        det_res=kwargs.get("detector_resolution", ws.DETECTOR_RESOLUTION),
-        energy=energy,
-        pattern_size=kwargs.get("pattern_size", PATTERN_SIZE),
-        pattern_thickness=kwargs.get("pattern_thickness", PATTERN_THICKNESS),
-        pattern_T=kwargs.get("pattern_transmission", PATTERN_TRANSMISSION),
-        d_prop=kwargs.get("propagation_distance", PROPAGATION_DISTANCE),
-        # [MASK EXPOSURE MODEL] (ADDED) forward ini/kwargs to the WSVT executor;
-        # exposure_bias=None triggers auto-estimation.
-        exposure_model=kwargs.get("exposure_model", EXPOSURE_MODEL),
-        exposure_bias=(None if kwargs.get("exposure_auto", EXPOSURE_AUTO)
-                       else kwargs.get("exposure_bias", EXPOSURE_BIAS)),
-        exposure_corner_sigma=kwargs.get("exposure_corner_sigma", EXPOSURE_CORNER_SIGMA),
-        exposure_supersample=kwargs.get("exposure_supersample", EXPOSURE_SUPERSAMPLE),
-        exposure_estimate=kwargs.get("exposure_estimate", EXPOSURE_ESTIMATE),
-        exposure_bias_grid=kwargs.get("exposure_bias_grid", EXPOSURE_BIAS_GRID),
-        d_source_v=kwargs.get("source_distance_v", SOURCE_DISTANCE_V),
-        d_source_h=kwargs.get("source_distance_h", SOURCE_DISTANCE_H),
-        source_v=kwargs.get("source_size_v", SOURCE_V),
-        source_h=kwargs.get("source_size_h", SOURCE_H),
-        correct_scale=kwargs.get("correct_scale", CORRECT_SCALE),
-        show_alignFigure=kwargs.get("show_align_figure", SHOW_ALIGN_FIGURE),
-        d_source_recal=kwargs.get("source_distance_recalculation", D_SOURCE_RECAL),
-        estimation_method=kwargs.get("estimation_method", ESTIMATION_METHOD),
-        propagator=kwargs.get("propagator", PROPAGATOR),
-        # [DETECTOR CALIBRATION] (ADDED) forward ini/kwargs to the WSVT executor.
-        cali_path=kwargs.get("calibration_path", CALIBRATION_PATH),
-        img_transfer_matrix=kwargs.get("image_transfer_matrix", IMAGE_TRANSFER_MATRIX),
-        find_transferMatrix=False,
-        crop=kwargs.get("crop", CROP),
-        dark=dark,
-        flat=flat,
-        rebinning=kwargs.get("rebinning", REBINNING),
-        lineWidth=kwargs.get("line_width", LINE_WIDTH),
-        cal_half_window=kwargs.get("window_search", WINDOW_SEARCH),
-        n_cores=kwargs.get("n_cores", N_CORES),
-        n_group=kwargs.get("n_group", N_GROUP),
-        use_wavelet=kwargs.get("use_wavelet", USE_WAVELET),
-        wavelet_lv_cut=kwargs.get("wavelet_lv_cut", WAVELET_CUT),
-        pyramid_level=kwargs.get("pyramid_level", PYRAMID_LEVEL),
-        n_iter=kwargs.get("n_iterations", N_ITERATIONS),
-        use_GPU=kwargs.get("use_gpu", USE_GPU),
-        scaling_x=kwargs.get("scaling_x", 1.0),
-        scaling_y=kwargs.get("scaling_y", 1.0),
-        verbose=kwargs.get("verbose", False),
-        save_images=kwargs.get("save_images", True))
+    # [GPU CACHE RELEASE] (CHANGED) capture the result instead of returning
+    # directly -- see the matching comment in _process_image above. try/finally
+    # so an exception anywhere inside execute_process_images_WSVT still
+    # releases the cache before the error propagates.
+    use_gpu_flag = kwargs.get("use_gpu", USE_GPU)
+    try:
+        result = execute_process_images_WSVT(
+            image_directory=data_collection_directory,
+            scan_positions_file=kwargs.get("scan_positions_file", WSVT_SCAN_POSITIONS_FILE),
+            data_directory=data_directory,
+            result_folder=result_folder,
+            pattern_path=pattern_path,
+            propagated_pattern=propagated_pattern,
+            propagated_patternDet=propagated_patternDet,
+            simulated_ref_stack=simulated_ref_stack,
+            process_after_mask=True,
+            saving_path=saving_path,
+            n_scan=kwargs.get("n_scan", WSVT_N_SCAN),
+            sign_x=kwargs.get("sign_x", WSVT_SIGN_X),
+            sign_y=kwargs.get("sign_y", WSVT_SIGN_Y),
+            auto_sign=kwargs.get("auto_sign", WSVT_AUTO_SIGN),
+            position_units=kwargs.get("position_units", WSVT_POSITION_UNITS),
+            p_x=kwargs.get("pixel_size", ws.PIXEL_SIZE),
+            det_res=kwargs.get("detector_resolution", ws.DETECTOR_RESOLUTION),
+            energy=energy,
+            pattern_size=kwargs.get("pattern_size", PATTERN_SIZE),
+            pattern_thickness=kwargs.get("pattern_thickness", PATTERN_THICKNESS),
+            pattern_T=kwargs.get("pattern_transmission", PATTERN_TRANSMISSION),
+            d_prop=kwargs.get("propagation_distance", PROPAGATION_DISTANCE),
+            # [MASK EXPOSURE MODEL] (ADDED) forward ini/kwargs to the WSVT executor;
+            # exposure_bias=None triggers auto-estimation.
+            exposure_model=kwargs.get("exposure_model", EXPOSURE_MODEL),
+            exposure_bias=(None if kwargs.get("exposure_auto", EXPOSURE_AUTO)
+                           else kwargs.get("exposure_bias", EXPOSURE_BIAS)),
+            exposure_corner_sigma=kwargs.get("exposure_corner_sigma", EXPOSURE_CORNER_SIGMA),
+            exposure_supersample=kwargs.get("exposure_supersample", EXPOSURE_SUPERSAMPLE),
+            exposure_estimate=kwargs.get("exposure_estimate", EXPOSURE_ESTIMATE),
+            exposure_bias_grid=kwargs.get("exposure_bias_grid", EXPOSURE_BIAS_GRID),
+            d_source_v=kwargs.get("source_distance_v", SOURCE_DISTANCE_V),
+            d_source_h=kwargs.get("source_distance_h", SOURCE_DISTANCE_H),
+            source_v=kwargs.get("source_size_v", SOURCE_V),
+            source_h=kwargs.get("source_size_h", SOURCE_H),
+            correct_scale=kwargs.get("correct_scale", CORRECT_SCALE),
+            show_alignFigure=kwargs.get("show_align_figure", SHOW_ALIGN_FIGURE),
+            d_source_recal=kwargs.get("source_distance_recalculation", D_SOURCE_RECAL),
+            estimation_method=kwargs.get("estimation_method", ESTIMATION_METHOD),
+            propagator=kwargs.get("propagator", PROPAGATOR),
+            # [DETECTOR CALIBRATION] (ADDED) forward ini/kwargs to the WSVT executor.
+            cali_path=kwargs.get("calibration_path", CALIBRATION_PATH),
+            img_transfer_matrix=kwargs.get("image_transfer_matrix", IMAGE_TRANSFER_MATRIX),
+            find_transferMatrix=False,
+            crop=kwargs.get("crop", CROP),
+            dark=dark,
+            flat=flat,
+            rebinning=kwargs.get("rebinning", REBINNING),
+            lineWidth=kwargs.get("line_width", LINE_WIDTH),
+            cal_half_window=kwargs.get("window_search", WINDOW_SEARCH),
+            n_cores=kwargs.get("n_cores", N_CORES),
+            n_group=kwargs.get("n_group", N_GROUP),
+            use_wavelet=kwargs.get("use_wavelet", USE_WAVELET),
+            wavelet_lv_cut=kwargs.get("wavelet_lv_cut", WAVELET_CUT),
+            pyramid_level=kwargs.get("pyramid_level", PYRAMID_LEVEL),
+            n_iter=kwargs.get("n_iterations", N_ITERATIONS),
+            use_GPU=use_gpu_flag,
+            scaling_x=kwargs.get("scaling_x", 1.0),
+            scaling_y=kwargs.get("scaling_y", 1.0),
+            verbose=kwargs.get("verbose", False),
+            save_images=kwargs.get("save_images", True))
+    finally:
+        if use_gpu_flag:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+    return result
 
 def _generate_simulated_mask(data_collection_directory, file_name_prefix, mask_directory, energy, image_index=1, **kwargs) -> [list, bool]:
     index_digits = kwargs.get("index_digits", ws.INDEX_DIGITS)
@@ -677,64 +737,74 @@ def _generate_simulated_mask(data_collection_directory, file_name_prefix, mask_d
     if not os.path.exists(os.path.join(mask_directory, 'propagated_pattern.npz')) or \
        not os.path.exists(os.path.join(mask_directory, 'propagated_patternDet.npz')) or \
        not os.path.exists(os.path.join(mask_directory, "reference.json")):
-        execute_process_image(img=image_file_name,
-                              image_data=image_data,
-                              dark=dark,
-                              flat=flat,
-                              result_folder=result_folder,
-                              data_directory=DATA_DIRECTORY,
-                              pattern_path=pattern_path,
-                              propagated_pattern=None,
-                              propagated_patternDet=None,
-                              saving_path=saving_path,
-                              crop=kwargs.get("crop", CROP),
-                              img_transfer_matrix=None if FIND_TRANSFER_MATRIX else IMAGE_TRANSFER_MATRIX,
-                              find_transferMatrix=FIND_TRANSFER_MATRIX,
-                              p_x=kwargs.get("pixel_size", ws.PIXEL_SIZE),
-                              det_res=kwargs.get("detector_resolution", ws.DETECTOR_RESOLUTION),
-                              energy=energy,
-                              pattern_size=kwargs.get("pattern_size", PATTERN_SIZE),
-                              pattern_thickness=kwargs.get("pattern_thickness", PATTERN_THICKNESS),
-                              pattern_T=kwargs.get("pattern_transmission", PATTERN_TRANSMISSION),
-                              d_prop=kwargs.get("propagation_distance", PROPAGATION_DISTANCE),
-                              # [MASK EXPOSURE MODEL] (ADDED) forward ini/kwargs to the executor;
-                              # exposure_bias=None triggers auto-estimation. This call site
-                              # (_generate_simulated_mask, used by the "Generate Mask" GUI action)
-                              # was previously missing these entirely, so execute_process_image
-                              # fell back to its own internal default (exposure_model=None)
-                              # instead of the configured EXPOSURE_MODEL.
-                              exposure_model=kwargs.get("exposure_model", EXPOSURE_MODEL),
-                              exposure_bias=(None if kwargs.get("exposure_auto", EXPOSURE_AUTO)
-                                             else kwargs.get("exposure_bias", EXPOSURE_BIAS)),
-                              exposure_corner_sigma=kwargs.get("exposure_corner_sigma", EXPOSURE_CORNER_SIGMA),
-                              exposure_supersample=kwargs.get("exposure_supersample", EXPOSURE_SUPERSAMPLE),
-                              exposure_estimate=kwargs.get("exposure_estimate", EXPOSURE_ESTIMATE),
-                              exposure_bias_grid=kwargs.get("exposure_bias_grid", EXPOSURE_BIAS_GRID),
-                              d_source_v=kwargs.get("source_distance_v", SOURCE_DISTANCE_V),
-                              d_source_h=kwargs.get("source_distance_h", SOURCE_DISTANCE_H),
-                              source_v=kwargs.get("source_size_v", SOURCE_V),
-                              source_h=kwargs.get("source_size_h", SOURCE_H),
-                              correct_scale=kwargs.get("correct_scale", CORRECT_SCALE),
-                              show_alignFigure=kwargs.get("show_align_figure", SHOW_ALIGN_FIGURE),
-                              d_source_recal=kwargs.get("source_distance_recalculation", D_SOURCE_RECAL),  # for mask generation only,
-                              propagator=kwargs.get("propagator", PROPAGATOR),
-                              cali_path=kwargs.get("calibration_path", CALIBRATION_PATH),
-                              mode=kwargs.get("mode", MODE),
-                              lineWidth=kwargs.get("line_width", LINE_WIDTH),
-                              rebinning=kwargs.get("rebinning", REBINNING),
-                              down_sampling=kwargs.get("down_sampling", DOWN_SAMPLING),
-                              crop_boundary=kwargs.get("crop_boundary", CROP_BOUNDARY),
-                              method=mask_gen_method,
-                              GPU=kwargs.get("use_gpu", USE_GPU),
-                              use_wavelet=kwargs.get("use_wavelet", USE_WAVELET),
-                              wavelet_lv_cut=kwargs.get("wavelet_lv_cut", WAVELET_CUT),
-                              n_iter=kwargs.get("n_iterations", N_ITERATIONS),
-                              pyramid_level=kwargs.get("pyramid_level", PYRAMID_LEVEL),
-                              template_size=kwargs.get("template_size", TEMPLATE_SIZE),
-                              window_searching=kwargs.get("window_search", WINDOW_SEARCH),
-                              nCores=kwargs.get("n_cores", N_CORES),
-                              nGroup=kwargs.get("n_group", N_GROUP),
-                              verbose=verbose)
+        # [GPU CACHE RELEASE] (CHANGED) try/finally so an exception anywhere
+        # inside execute_process_image still releases the cache before the
+        # error propagates -- see matching comment in _process_image.
+        use_gpu_flag = kwargs.get("use_gpu", USE_GPU)
+        try:
+            execute_process_image(img=image_file_name,
+                                  image_data=image_data,
+                                  dark=dark,
+                                  flat=flat,
+                                  result_folder=result_folder,
+                                  data_directory=DATA_DIRECTORY,
+                                  pattern_path=pattern_path,
+                                  propagated_pattern=None,
+                                  propagated_patternDet=None,
+                                  saving_path=saving_path,
+                                  crop=kwargs.get("crop", CROP),
+                                  img_transfer_matrix=None if FIND_TRANSFER_MATRIX else IMAGE_TRANSFER_MATRIX,
+                                  find_transferMatrix=FIND_TRANSFER_MATRIX,
+                                  p_x=kwargs.get("pixel_size", ws.PIXEL_SIZE),
+                                  det_res=kwargs.get("detector_resolution", ws.DETECTOR_RESOLUTION),
+                                  energy=energy,
+                                  pattern_size=kwargs.get("pattern_size", PATTERN_SIZE),
+                                  pattern_thickness=kwargs.get("pattern_thickness", PATTERN_THICKNESS),
+                                  pattern_T=kwargs.get("pattern_transmission", PATTERN_TRANSMISSION),
+                                  d_prop=kwargs.get("propagation_distance", PROPAGATION_DISTANCE),
+                                  # [MASK EXPOSURE MODEL] (ADDED) forward ini/kwargs to the executor;
+                                  # exposure_bias=None triggers auto-estimation. This call site
+                                  # (_generate_simulated_mask, used by the "Generate Mask" GUI action)
+                                  # was previously missing these entirely, so execute_process_image
+                                  # fell back to its own internal default (exposure_model=None)
+                                  # instead of the configured EXPOSURE_MODEL.
+                                  exposure_model=kwargs.get("exposure_model", EXPOSURE_MODEL),
+                                  exposure_bias=(None if kwargs.get("exposure_auto", EXPOSURE_AUTO)
+                                                 else kwargs.get("exposure_bias", EXPOSURE_BIAS)),
+                                  exposure_corner_sigma=kwargs.get("exposure_corner_sigma", EXPOSURE_CORNER_SIGMA),
+                                  exposure_supersample=kwargs.get("exposure_supersample", EXPOSURE_SUPERSAMPLE),
+                                  exposure_estimate=kwargs.get("exposure_estimate", EXPOSURE_ESTIMATE),
+                                  exposure_bias_grid=kwargs.get("exposure_bias_grid", EXPOSURE_BIAS_GRID),
+                                  d_source_v=kwargs.get("source_distance_v", SOURCE_DISTANCE_V),
+                                  d_source_h=kwargs.get("source_distance_h", SOURCE_DISTANCE_H),
+                                  source_v=kwargs.get("source_size_v", SOURCE_V),
+                                  source_h=kwargs.get("source_size_h", SOURCE_H),
+                                  correct_scale=kwargs.get("correct_scale", CORRECT_SCALE),
+                                  show_alignFigure=kwargs.get("show_align_figure", SHOW_ALIGN_FIGURE),
+                                  d_source_recal=kwargs.get("source_distance_recalculation", D_SOURCE_RECAL),  # for mask generation only,
+                                  propagator=kwargs.get("propagator", PROPAGATOR),
+                                  cali_path=kwargs.get("calibration_path", CALIBRATION_PATH),
+                                  mode=kwargs.get("mode", MODE),
+                                  lineWidth=kwargs.get("line_width", LINE_WIDTH),
+                                  rebinning=kwargs.get("rebinning", REBINNING),
+                                  down_sampling=kwargs.get("down_sampling", DOWN_SAMPLING),
+                                  crop_boundary=kwargs.get("crop_boundary", CROP_BOUNDARY),
+                                  method=mask_gen_method,
+                                  GPU=use_gpu_flag,
+                                  use_wavelet=kwargs.get("use_wavelet", USE_WAVELET),
+                                  wavelet_lv_cut=kwargs.get("wavelet_lv_cut", WAVELET_CUT),
+                                  n_iter=kwargs.get("n_iterations", N_ITERATIONS),
+                                  pyramid_level=kwargs.get("pyramid_level", PYRAMID_LEVEL),
+                                  template_size=kwargs.get("template_size", TEMPLATE_SIZE),
+                                  window_searching=kwargs.get("window_search", WINDOW_SEARCH),
+                                  nCores=kwargs.get("n_cores", N_CORES),
+                                  nGroup=kwargs.get("n_group", N_GROUP),
+                                  verbose=verbose)
+        finally:
+            if use_gpu_flag:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
         is_new_mask = True
         print("Simulated mask generated in " + mask_directory)
     else:

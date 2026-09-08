@@ -92,6 +92,7 @@ def generate_initialization_parameters_from_ini(ini: IniFacade):
             "down_sampling" : wa.DOWN_SAMPLING,
             "method" : wa.METHOD,
             "use_gpu" : wa.USE_GPU,
+            "gpu_device_index" : wa.GPU_DEVICE_INDEX,   # [GPU DEVICE SELECTION] (ADDED)
             "use_wavelet" : wa.USE_WAVELET,
             "wavelet_cut" : wa.WAVELET_CUT,
             "pyramid_level" : wa.PYRAMID_LEVEL,
@@ -236,6 +237,7 @@ def set_ini_from_initialization_parameters(initialization_parameters: ScriptData
     wa.DOWN_SAMPLING = data_analysis_configuration["down_sampling"]
     wa.METHOD = data_analysis_configuration["method"]
     wa.USE_GPU = data_analysis_configuration["use_gpu"]
+    wa.GPU_DEVICE_INDEX = data_analysis_configuration["gpu_device_index"]   # [GPU DEVICE SELECTION] (ADDED)
     wa.USE_WAVELET = data_analysis_configuration["use_wavelet"]
     wa.WAVELET_CUT = data_analysis_configuration["wavelet_cut"]
     wa.PYRAMID_LEVEL = data_analysis_configuration["pyramid_level"]
