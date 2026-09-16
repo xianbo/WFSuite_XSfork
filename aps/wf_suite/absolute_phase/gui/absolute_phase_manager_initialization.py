@@ -65,6 +65,16 @@ def generate_initialization_parameters_from_ini(ini: IniFacade):
             "pattern_transmission" : wa.PATTERN_TRANSMISSION,
             "ran_mask" : wa.RAN_MASK,
             "propagation_distance" : wa.PROPAGATION_DISTANCE,
+            # [MASK EXPOSURE MODEL] (ADDED) forward the exposure config through
+            # the GUI's config bridge so per-dataset ini/json values reach
+            # wa.EXPOSURE_* instead of being stuck at their load-time default.
+            "exposure_model" : wa.EXPOSURE_MODEL,
+            "exposure_auto" : wa.EXPOSURE_AUTO,
+            "exposure_bias" : wa.EXPOSURE_BIAS,
+            "exposure_corner_sigma" : wa.EXPOSURE_CORNER_SIGMA,
+            "exposure_supersample" : wa.EXPOSURE_SUPERSAMPLE,
+            "exposure_estimate" : wa.EXPOSURE_ESTIMATE,
+            "exposure_bias_grid" : wa.EXPOSURE_BIAS_GRID,
             "energy" : wa.ENERGY,
             "source_v" : wa.SOURCE_V,
             "source_h" : wa.SOURCE_H,
@@ -82,6 +92,7 @@ def generate_initialization_parameters_from_ini(ini: IniFacade):
             "down_sampling" : wa.DOWN_SAMPLING,
             "method" : wa.METHOD,
             "use_gpu" : wa.USE_GPU,
+            "gpu_device_index" : wa.GPU_DEVICE_INDEX,   # [GPU DEVICE SELECTION] (ADDED)
             "use_wavelet" : wa.USE_WAVELET,
             "wavelet_cut" : wa.WAVELET_CUT,
             "pyramid_level" : wa.PYRAMID_LEVEL,
@@ -96,6 +107,12 @@ def generate_initialization_parameters_from_ini(ini: IniFacade):
             "correct_scale" : wa.CORRECT_SCALE,
             "flat" : wa.FLAT,
             "dark" : wa.DARK,
+            "wsvt_scan_positions_file" : wa.WSVT_SCAN_POSITIONS_FILE,
+            "wsvt_n_scan" : wa.WSVT_N_SCAN,
+            "wsvt_auto_sign" : wa.WSVT_AUTO_SIGN,
+            "wsvt_sign_x" : wa.WSVT_SIGN_X,
+            "wsvt_sign_y" : wa.WSVT_SIGN_Y,
+            "wsvt_position_units" : wa.WSVT_POSITION_UNITS,
         },
         "back_propagation" :{
             "kind" : wa.KIND,
@@ -194,6 +211,15 @@ def set_ini_from_initialization_parameters(initialization_parameters: ScriptData
     wa.PATTERN_TRANSMISSION = data_analysis_configuration["pattern_transmission"]
     wa.RAN_MASK = data_analysis_configuration["ran_mask"]
     wa.PROPAGATION_DISTANCE = data_analysis_configuration["propagation_distance"]
+    # [MASK EXPOSURE MODEL] (ADDED) see matching block in
+    # generate_initialization_parameters_from_ini above.
+    wa.EXPOSURE_MODEL = data_analysis_configuration["exposure_model"]
+    wa.EXPOSURE_AUTO = data_analysis_configuration["exposure_auto"]
+    wa.EXPOSURE_BIAS = data_analysis_configuration["exposure_bias"]
+    wa.EXPOSURE_CORNER_SIGMA = data_analysis_configuration["exposure_corner_sigma"]
+    wa.EXPOSURE_SUPERSAMPLE = data_analysis_configuration["exposure_supersample"]
+    wa.EXPOSURE_ESTIMATE = data_analysis_configuration["exposure_estimate"]
+    wa.EXPOSURE_BIAS_GRID = data_analysis_configuration["exposure_bias_grid"]
     wa.ENERGY = data_analysis_configuration["energy"]
     wa.SOURCE_V = data_analysis_configuration["source_v"]
     wa.SOURCE_H = data_analysis_configuration["source_h"]
@@ -211,6 +237,7 @@ def set_ini_from_initialization_parameters(initialization_parameters: ScriptData
     wa.DOWN_SAMPLING = data_analysis_configuration["down_sampling"]
     wa.METHOD = data_analysis_configuration["method"]
     wa.USE_GPU = data_analysis_configuration["use_gpu"]
+    wa.GPU_DEVICE_INDEX = data_analysis_configuration["gpu_device_index"]   # [GPU DEVICE SELECTION] (ADDED)
     wa.USE_WAVELET = data_analysis_configuration["use_wavelet"]
     wa.WAVELET_CUT = data_analysis_configuration["wavelet_cut"]
     wa.PYRAMID_LEVEL = data_analysis_configuration["pyramid_level"]
@@ -225,6 +252,12 @@ def set_ini_from_initialization_parameters(initialization_parameters: ScriptData
     wa.CORRECT_SCALE = data_analysis_configuration["correct_scale"]
     wa.FLAT = data_analysis_configuration["flat"]
     wa.DARK = data_analysis_configuration["dark"]
+    wa.WSVT_SCAN_POSITIONS_FILE = data_analysis_configuration["wsvt_scan_positions_file"]
+    wa.WSVT_N_SCAN = data_analysis_configuration["wsvt_n_scan"]
+    wa.WSVT_AUTO_SIGN = data_analysis_configuration["wsvt_auto_sign"]
+    wa.WSVT_SIGN_X = data_analysis_configuration["wsvt_sign_x"]
+    wa.WSVT_SIGN_Y = data_analysis_configuration["wsvt_sign_y"]
+    wa.WSVT_POSITION_UNITS = data_analysis_configuration["wsvt_position_units"]
     
     wa.KIND = back_propagation_configuration["kind"]
     wa.REBINNING_BP = back_propagation_configuration["rebinning_bp"]

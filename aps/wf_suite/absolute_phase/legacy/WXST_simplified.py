@@ -88,10 +88,13 @@ def save_figure_1D(image_pair, path='./', p_x=1):
         plt.savefig(os.path.join(path, each_pair[0] + '.png'), dpi=150)
         plt.close()
 
-def save_data(data, path_folder='./', overwrite=True):
+def save_data(data, path_folder='./', overwrite=True, metadata=None):
     """ save data in the path folder
         Args:
             path_folder (str, optional): result path folder. Defaults to './'.
+            metadata (dict, optional): scalar values needed to reproduce the
+                integration (p_x, x_scaling, y_scaling, energy, wavelength,
+                d_prop). Stored as HDF5 root-group attributes.
     """
     if path_folder is not None:
         if not os.path.exists(path_folder):
@@ -109,7 +112,7 @@ def save_data(data, path_folder='./', overwrite=True):
                                         result_filename + '.json')):
                 kk += 1
                 result_filename =  result_filename + '_{}'.format(kk)
-        write_h5(path_folder, result_filename, data)
+        write_h5(path_folder, result_filename, data, attrs=metadata)
 
 def filter_erosion(image, val_thresh, filt_sz=2):
     

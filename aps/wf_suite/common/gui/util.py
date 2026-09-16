@@ -49,7 +49,7 @@ import sys
 
 from AnyQt.QtWidgets import QDialog, QLabel, QWidget, QPushButton, QHBoxLayout, QVBoxLayout, QSlider
 from AnyQt.QtCore import Qt
-from matplotlib import cm
+from matplotlib import cm, colormaps
 
 class ShowWaitDialog(QDialog):
     def __init__(self, title="", text="", width=500, height=80, parent=None, color_string="139, 0, 0"):
@@ -82,7 +82,9 @@ def plot_3D(fig, image, label, p_x, scaling=[1.0, 1.0]):
     XX, YY = np.meshgrid(
         np.arange(image.shape[1]) * p_x * scaling[0] * 1e6,
         np.arange(image.shape[0]) * p_x * scaling[1] * 1e6)
-    ax1.plot_surface(XX, YY, image, cmap=cm.get_cmap('hot'))
+    # [BUGFIX] (CHANGED) was cm.get_cmap('hot') -- matplotlib.cm.get_cmap was
+    # deprecated in 3.7 and removed in 3.9, raising AttributeError.
+    ax1.plot_surface(XX, YY, image, cmap=colormaps['hot'])
     ax1.set_xlabel('x [μm]')
     ax1.set_ylabel('y [μm]')
     ax1.set_zlabel(label)

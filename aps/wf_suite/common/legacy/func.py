@@ -94,15 +94,21 @@ def image_roi(img, M):
 
     return img_data
 
-def write_h5(result_path, file_name, data_dict):
+def write_h5(result_path, file_name, data_dict, attrs=None):
     ''' this function is used to save the variables in *args to hdf5 file
         args are in format: {'name': data}
+        attrs (dict, optional): scalar metadata stored as root-group attributes
+            (e.g. p_x, scaling factors, energy). Kept as attributes rather than
+            datasets because HDF5 scalars cannot use gzip/chunked storage.
     '''
     if not os.path.exists(result_path):
         os.makedirs(result_path)
     with h5py.File(os.path.join(result_path, file_name+'.hdf5'), 'w') as f:
         for key_name in data_dict:
             f.create_dataset(key_name, data=data_dict[key_name], compression="gzip", compression_opts=9)
+        if attrs is not None:
+            for key_name in attrs:
+                f.attrs[key_name] = attrs[key_name]
     prColor('result hdf5 file : {} saved'.format(file_name+'.hdf5'), 'green')
 
 def read_h5(file_path, key_name, print_key=False):
